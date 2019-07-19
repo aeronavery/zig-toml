@@ -1,5 +1,5 @@
 # zig-toml
-A TOML parser written in Zig. The end goal is for the program to be robust, with no crashing given any situation. Though, in its current state this program is probably far from that goal.
+A TOML parser written in Zig targeting [TOML v0.5.0](https://github.com/toml-lang/toml). The end goal is for the program to be robust, with no crashing given any situation. Though, in its current state this program is probably far from that goal.
 
 There is currently a lack of documentation but the tests contained should give enough of an idea on how to use this.
 
