@@ -91,30 +91,32 @@ pub const Table = struct {
     pub fn getKey(self: Self, key: []const u8) ?Value {
         if (self.keys.getValue(key)) |value| {
             return value;
-        } else {
-            var it = self.children.iterator();
-            while (it.next()) |nextChild| {
-                // recursion is unavoidable here
-                if (nextChild.value.getKey(key)) |value| {
-                    return value;
-                }
-            }
         }
+        // else {
+        //    var it = self.children.iterator();
+        //   while (it.next()) |nextChild| {
+        //        // recursion is unavoidable here
+        //        if (nextChild.value.getKey(key)) |value| {
+        //            return value;
+        //        }
+        //    }
+        // }
         return null;
     }
 
     pub fn getTable(self: Self, name: []const u8) ?Table {
         if (self.children.getValue(name)) |table| {
             return table.*;
-        } else {
-            var it = self.children.iterator();
-            while (it.next()) |nextChild| {
-                // the recursion is unavoidable here
-                if (nextChild.value.getTable(name)) |table| {
-                    return table;
-                }
-            }
         }
+        // else {
+        //    var it = self.children.iterator();
+        //    while (it.next()) |nextChild| {
+        //        // the recursion is unavoidable here
+        //        if (nextChild.value.getTable(name)) |table| {
+        //            return table;
+        //        }
+        //    }
+        //}
         return null;
     }
 
@@ -474,17 +476,17 @@ fn parseKeyIdentifier(allocator: *std.mem.Allocator, contents: []const u8, index
     }
 }
 
-fn parseTable(allocator: *std.mem.Allocator, name: []const u8, contents: []const u8, index: *usize) anyerror!*Table {
+fn parseTable(allocator: *std.mem.Allocator, name: []const u8, contents: []const u8, index: *usize, root: bool) anyerror!*Table {
     var table = try Table.create(allocator, name);
     var i = index.*;
     var key: Key = Key.None;
     var value: Value = Value.None;
     var state = getState(contents, index.*);
-    while (i < contents.len) {
+    loop: while (i < contents.len) {
         switch (state) {
             State.None => {},
             State.EOF => {
-                break;
+                break :loop;
             },
             State.Comment => {
                 i = skipComment(contents, i);
@@ -506,11 +508,17 @@ fn parseTable(allocator: *std.mem.Allocator, name: []const u8, contents: []const
             },
             State.Table => {
                 // Deals with tables or arrays depending on if key == Key.None
-                i += 1;
                 if (key != Key.None and value == Value.None) {
                     // treat this as an array
+                    i += 1;
                     value = try parseArray(allocator, contents, &i);
                 } else {
+                    if (!root) {
+                        // rough
+                        i -= 1;
+                        break :loop;
+                    }
+                    i += 1;
                     var tableKey = try parseKeyIdentifier(allocator, contents, &i);
                     var tableName: []const u8 = undefined;
                     var currentTable: *Table = table;
@@ -536,7 +544,7 @@ fn parseTable(allocator: *std.mem.Allocator, name: []const u8, contents: []const
                     if (contents[i] != ']') {
                         return ParseError.MalformedTable;
                     }
-                    var newTable = try parseTable(allocator, tableName, contents, &i);
+                    var newTable = try parseTable(allocator, tableName, contents, &i, false);
                     try currentTable.addTable(newTable);
                 }
             },
@@ -589,6 +597,7 @@ fn parseTable(allocator: *std.mem.Allocator, name: []const u8, contents: []const
             if (contents[i] == '=') {
                 i = getNextChar(contents, i);
             } else {
+                std.debug.warn("{} {}\n", name, key);
                 return ParseError.ExpectedEquals;
             }
         }
@@ -613,13 +622,13 @@ pub fn parseContents(allocator: *std.mem.Allocator, contents: []const u8) !*Tabl
     // TODO: inline tables
     // TODO: array of tables
 
-    var globalTable = try parseTable(allocator, "", contents, &index);
+    var globalTable = try parseTable(allocator, "", contents, &index, true);
 
     return globalTable;
 }
 
 test "test.toml file" {
-    var table = try parseFile(std.heap.c_allocator, "test/test.toml");
+    //    var table = try parseFile(std.heap.c_allocator, "test/test.toml");
 }
 
 test "key value pair" {
