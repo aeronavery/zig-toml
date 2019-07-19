@@ -3,6 +3,8 @@ A TOML parser written in Zig. The end goal is for the program to be robust, with
 
 There is currently a lack of documentation but the tests contained should give enough of an idea on how to use this.
 
+[Quickstart Guide](https://github.com/darithorn/zig-toml/wiki/Quickstart-Guide)
+
 ## Features
 - [x] Tables
 - [x] Keys (all kinds)
