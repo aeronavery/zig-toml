@@ -585,8 +585,13 @@ fn parseTable(allocator: *std.mem.Allocator, name: []const u8, contents: []const
             // TODO: support Windows line endings \r\n
             // enforce a new line after a key-value pair
             i += 1;
-            if (i < contents.len and contents[i] != '\n') {
-                return ParseError.ExpectedNewline;
+            if (i < contents.len) {
+                if (contents[i] == '\r') {
+                    i += 1;
+                }
+                if (contents[i] != '\n') {
+                    return ParseError.ExpectedNewline;
+                }
             }
         }
 
@@ -960,4 +965,11 @@ test "table with dotted identifier" {
             assert(std.mem.eql(u8, testKey.?.String, "hello"));
         }
     }
+}
+
+test "window line endings" {
+    var table = try parseContents(std.heap.c_allocator, "foo=1234\r\nbar=5789\n");
+
+    assert(table.getKey("foo") != null);
+    assert(table.getKey("bar") != null);
 }
