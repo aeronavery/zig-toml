@@ -21,6 +21,8 @@ There is currently a lack of documentation but the tests contained should give e
 
 ## Building and Usage
 
+This library is self-contained and requires no dependencies.
+
 To build simply run `zig build` and that will output a file called `libtoml.a` that you can link with your program.
 
 If you want to run the tests then use the `zig build test` command.
