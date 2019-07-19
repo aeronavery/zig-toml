@@ -153,6 +153,7 @@ fn indexIdentifier(ident: DottedIdentifier, index: usize) ?[]const u8 {
     return current;
 }
 
+/// This assumes that the starting character aka contents[start] is a '.'
 fn parseDottedIdentifier(allocator: *std.mem.Allocator, contents: []const u8, start: *usize) !DottedIdentifier {
     var result = DottedIdentifier.init();
     if (start.* >= contents.len) {
@@ -179,6 +180,7 @@ fn parseDottedIdentifier(allocator: *std.mem.Allocator, contents: []const u8, st
     return result;
 }
 
+/// Assumes the starting character is a " or a '
 fn parseString(contents: []const u8, index: *usize) ParseError![]const u8 {
     var start = index.*;
     var i = index.*;
@@ -208,7 +210,6 @@ fn parseString(contents: []const u8, index: *usize) ParseError![]const u8 {
 
 const Key = union(enum) {
     None,
-    String: []const u8,
     DottedIdent: DottedIdentifier,
     Ident: []const u8,
 };
@@ -272,9 +273,6 @@ pub const Table = struct {
         switch (key) {
             Key.None => {
                 return;
-            },
-            Key.String => |name| {
-                _ = try self.keys.put(name, value);
             },
             Key.Ident => |name| {
                 _ = try self.keys.put(name, value);
@@ -458,6 +456,24 @@ fn skipComment(contents: []const u8, start: usize) usize {
     return i;
 }
 
+fn parseKeyIdentifier(allocator: *std.mem.Allocator, contents: []const u8, index: *usize) !Key {
+    var word: []const u8 = undefined;
+    if (isQuote(contents[index.*])) {
+        word = try parseString(contents, index);
+    } else {
+        word = try parseIdentifier(contents, index);
+    }
+    if (index.* + 1 < contents.len and contents[index.* + 1] == '.') {
+        index.* += 1;
+        var dottedResult = try parseDottedIdentifier(allocator, contents, index);
+        var node = try dottedResult.createNode(word, allocator);
+        dottedResult.prepend(node);
+        return Key{ .DottedIdent = dottedResult };
+    } else {
+        return Key{ .Ident = word };
+    }
+}
+
 fn parseTable(allocator: *std.mem.Allocator, name: []const u8, contents: []const u8, index: *usize) anyerror!*Table {
     var table = try Table.create(allocator, name);
     var i = index.*;
@@ -474,26 +490,15 @@ fn parseTable(allocator: *std.mem.Allocator, name: []const u8, contents: []const
                 i = skipComment(contents, i);
             },
             State.Identifier => {
-                var word = try parseIdentifier(contents, &i);
-
                 // boolean value identifier
                 if (key != Key.None and value == Value.None) {
+                    var word = try parseIdentifier(contents, &i);
                     value = try convertIdentifierToValue(word);
-                } else if (i + 1 < contents.len and contents[i + 1] == '.') {
-                    // dotted identifier
-                    i += 1;
-                    var dottedResult = try parseDottedIdentifier(allocator, contents, &i);
-                    var node = try dottedResult.createNode(word, allocator);
-                    dottedResult.prepend(node);
-                    if (key == Key.None) {
-                        key = Key{ .DottedIdent = dottedResult };
-                    } else {
-                        return ParseError.MalformedKey;
-                    }
                 } else {
+                    var keyIdentifier = try parseKeyIdentifier(allocator, contents, &i);
                     // regular identifier
                     if (key == Key.None) {
-                        key = Key{ .Ident = word };
+                        key = keyIdentifier;
                     } else {
                         return ParseError.MalformedKey;
                     }
@@ -506,18 +511,33 @@ fn parseTable(allocator: *std.mem.Allocator, name: []const u8, contents: []const
                     // treat this as an array
                     value = try parseArray(allocator, contents, &i);
                 } else {
+                    var tableKey = try parseKeyIdentifier(allocator, contents, &i);
                     var tableName: []const u8 = undefined;
-                    if (isQuote(contents[i])) {
-                        tableName = try parseString(contents, &i);
-                    } else {
-                        tableName = try parseIdentifier(contents, &i);
+                    var currentTable: *Table = table;
+                    switch (tableKey) {
+                        Key.None => {
+                            return ParseError.MalformedTable;
+                        },
+                        Key.Ident => |ident| {
+                            tableName = ident;
+                        },
+                        Key.DottedIdent => |dotted| {
+                            var it = dotted.first;
+                            while (it) |node| : (it = node.next) {
+                                if (node == dotted.last) {
+                                    break;
+                                }
+                                currentTable = try table.addNewTable(node.data);
+                            }
+                            tableName = dotted.last.?.data;
+                        },
                     }
                     i += 1;
                     if (contents[i] != ']') {
                         return ParseError.MalformedTable;
                     }
                     var newTable = try parseTable(allocator, tableName, contents, &i);
-                    try table.addTable(newTable);
+                    try currentTable.addTable(newTable);
                 }
             },
             State.Number => {
@@ -533,10 +553,11 @@ fn parseTable(allocator: *std.mem.Allocator, name: []const u8, contents: []const
                 }
             },
             State.String => {
-                var str = try parseString(contents, &i);
                 if (key == Key.None) {
-                    key = Key{ .String = str };
+                    var strKey = try parseKeyIdentifier(allocator, contents, &i);
+                    key = strKey;
                 } else if (value == Value.None) {
+                    var str = try parseString(contents, &i);
                     value = Value{ .String = str };
                 }
             },
@@ -892,5 +913,25 @@ test "key value array in array" {
         var array4 = indexArray(array3.Array, 0).?;
         assert(array3.Array.len == 1);
         assert(indexArray(array4.Array, 0).?.Integer == 1234);
+    }
+}
+
+test "table with dotted identifier" {
+    var table = try parseContents(std.heap.c_allocator,
+        \\ [foo.bar]
+        \\ testKey = "hello"
+        \\
+    );
+
+    var fooTable = table.getTable("foo");
+    assert(fooTable != null);
+    if (fooTable) |foo| {
+        var barTable = foo.getTable("bar");
+        assert(barTable != null);
+        if (barTable) |bar| {
+            var testKey = bar.getKey("testKey");
+            assert(testKey != null);
+            assert(std.mem.eql(u8, testKey.?.String, "hello"));
+        }
     }
 }
