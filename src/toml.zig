@@ -1,6 +1,134 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
+const Key = union(enum) {
+    None,
+    DottedIdent: DottedIdentifier,
+    Ident: []const u8,
+};
+
+pub const DynamicArray = std.TailQueue(Value);
+
+/// utility function helping to index the DynamicArray
+pub fn indexArray(array: DynamicArray, index: usize) ?Value {
+    var i = index;
+    var it = array.first;
+    while (it) |node| : (it = node.next) {
+        if (i == 0) {
+            return node.data;
+        }
+        i -= 1;
+    }
+    return null;
+}
+
+pub const Value = union(enum) {
+    None,
+    String: []const u8,
+    Boolean: bool,
+    Integer: i64,
+    Array: DynamicArray,
+};
+
+pub const Table = struct {
+    const Self = @This();
+    const TableMap = std.AutoHashMap([]const u8, *Table);
+    const KeyMap = std.AutoHashMap([]const u8, Value);
+
+    pub children: TableMap,
+    pub keys: KeyMap,
+    pub name: []const u8,
+
+    allocator: *std.mem.Allocator,
+
+    pub fn init(allocator: *std.mem.Allocator, name: []const u8) Self {
+        return Self{
+            .children = TableMap.init(allocator),
+            .keys = TableMap.init(allocator),
+            .name = name,
+            .allocator = allocator,
+        };
+    }
+
+    pub fn create(allocator: *std.mem.Allocator, name: []const u8) !*Self {
+        var result = try allocator.create(Table);
+        result.* = Table.init(allocator, name);
+        return result;
+    }
+
+    /// Cleans up the table's keys and its children
+    pub fn deinit(self: *Self) void {
+        // TODO: implement deinit
+    }
+
+    pub fn addKey(self: *Self, key: Key, value: Value) !void {
+        // TODO: test for key clobbering and give an error
+        switch (key) {
+            Key.None => {
+                return;
+            },
+            Key.Ident => |name| {
+                _ = try self.keys.put(name, value);
+            },
+            Key.DottedIdent => |dotted| {
+                var currentTable: *Table = self;
+                var index: usize = 0;
+                while (index < dotted.len - 1) : (index += 1) {
+                    if (currentTable.children.getValue(indexIdentifier(dotted, index).?)) |table| {
+                        currentTable = table;
+                    } else {
+                        var table = try self.allocator.create(Table);
+                        table.* = Table.init(self.allocator, indexIdentifier(dotted, index).?);
+                        try currentTable.addTable(table);
+                        currentTable = table;
+                    }
+                }
+                _ = try currentTable.keys.put(indexIdentifier(dotted, index).?, value);
+            },
+        }
+    }
+
+    pub fn getKey(self: Self, key: []const u8) ?Value {
+        if (self.keys.getValue(key)) |value| {
+            return value;
+        } else {
+            var it = self.children.iterator();
+            while (it.next()) |nextChild| {
+                // recursion is unavoidable here
+                if (nextChild.value.getKey(key)) |value| {
+                    return value;
+                }
+            }
+        }
+        return null;
+    }
+
+    pub fn getTable(self: Self, name: []const u8) ?Table {
+        if (self.children.getValue(name)) |table| {
+            return table.*;
+        } else {
+            var it = self.children.iterator();
+            while (it.next()) |nextChild| {
+                // the recursion is unavoidable here
+                if (nextChild.value.getTable(name)) |table| {
+                    return table;
+                }
+            }
+        }
+        return null;
+    }
+
+    pub fn addTable(self: *Self, table: *Table) !void {
+        _ = try self.children.put(table.name, table);
+    }
+
+    pub fn addNewTable(self: *Self, name: []const u8) !*Table {
+        var table = try Table.create(self.allocator, name);
+        _ = try self.children.put(name, table);
+        return table;
+    }
+};
+
 const State = enum {
     None,
     EOF,
@@ -207,134 +335,6 @@ fn parseString(contents: []const u8, index: *usize) ParseError![]const u8 {
     index.* = i;
     return contents[start + 1 .. i];
 }
-
-const Key = union(enum) {
-    None,
-    DottedIdent: DottedIdentifier,
-    Ident: []const u8,
-};
-
-pub const DynamicArray = std.TailQueue(Value);
-
-/// utility function helping to index the DynamicArray
-pub fn indexArray(array: DynamicArray, index: usize) ?Value {
-    var i = index;
-    var it = array.first;
-    while (it) |node| : (it = node.next) {
-        if (i == 0) {
-            return node.data;
-        }
-        i -= 1;
-    }
-    return null;
-}
-
-pub const Value = union(enum) {
-    None,
-    String: []const u8,
-    Boolean: bool,
-    Integer: i64,
-    Array: DynamicArray,
-};
-
-pub const Table = struct {
-    const Self = @This();
-    const TableMap = std.AutoHashMap([]const u8, *Table);
-    const KeyMap = std.AutoHashMap([]const u8, Value);
-
-    pub children: TableMap,
-    pub keys: KeyMap,
-    pub name: []const u8,
-
-    allocator: *std.mem.Allocator,
-
-    pub fn init(allocator: *std.mem.Allocator, name: []const u8) Self {
-        return Self{
-            .children = TableMap.init(allocator),
-            .keys = TableMap.init(allocator),
-            .name = name,
-            .allocator = allocator,
-        };
-    }
-
-    pub fn create(allocator: *std.mem.Allocator, name: []const u8) !*Self {
-        var result = try allocator.create(Table);
-        result.* = Table.init(allocator, name);
-        return result;
-    }
-
-    /// Cleans up the table's keys and its children
-    pub fn deinit(self: *Self) void {
-        // TODO: implement deinit
-    }
-
-    pub fn addKey(self: *Self, key: Key, value: Value) !void {
-        // TODO: test for key clobbering and give an error
-        switch (key) {
-            Key.None => {
-                return;
-            },
-            Key.Ident => |name| {
-                _ = try self.keys.put(name, value);
-            },
-            Key.DottedIdent => |dotted| {
-                var currentTable: *Table = self;
-                var index: usize = 0;
-                while (index < dotted.len - 1) : (index += 1) {
-                    if (currentTable.children.getValue(indexIdentifier(dotted, index).?)) |table| {
-                        currentTable = table;
-                    } else {
-                        var table = try self.allocator.create(Table);
-                        table.* = Table.init(self.allocator, indexIdentifier(dotted, index).?);
-                        try currentTable.addTable(table);
-                        currentTable = table;
-                    }
-                }
-                _ = try currentTable.keys.put(indexIdentifier(dotted, index).?, value);
-            },
-        }
-    }
-
-    pub fn getKey(self: Self, key: []const u8) ?Value {
-        if (self.keys.getValue(key)) |value| {
-            return value;
-        } else {
-            var it = self.children.iterator();
-            while (it.next()) |nextChild| {
-                // recursion is unavoidable here
-                if (nextChild.value.getKey(key)) |value| {
-                    return value;
-                }
-            }
-        }
-        return null;
-    }
-
-    pub fn getTable(self: Self, name: []const u8) ?Table {
-        if (self.children.getValue(name)) |table| {
-            return table.*;
-        } else {
-            var it = self.children.iterator();
-            while (it.next()) |nextChild| {
-                // the recursion is unavoidable here
-                if (nextChild.value.getTable(name)) |table| {
-                    return table;
-                }
-            }
-        }
-        return null;
-    }
-
-    pub fn addTable(self: *Self, table: *Table) !void {
-        _ = try self.children.put(table.name, table);
-    }
-
-    pub fn addNewTable(self: *Self, name: []const u8) !*Table {
-        var table = try Table.create(self.allocator, name);
-        _ = try self.children.put(name, table);
-        return table;
-    }
-};
 
 fn parseIdentifier(contents: []const u8, index: *usize) ![]const u8 {
     var start = index.*;
@@ -616,6 +616,10 @@ pub fn parseContents(allocator: *std.mem.Allocator, contents: []const u8) !*Tabl
     var globalTable = try parseTable(allocator, "", contents, &index);
 
     return globalTable;
+}
+
+test "test.toml file" {
+    var table = try parseFile(std.heap.c_allocator, "test/test.toml");
 }
 
 test "key value pair" {
@@ -914,6 +918,19 @@ test "key value array in array" {
         assert(array3.Array.len == 1);
         assert(indexArray(array4.Array, 0).?.Integer == 1234);
     }
+}
+
+test "key with string first" {
+    var table = try parseContents(std.heap.c_allocator,
+        \\ "foo".bar = "foobar"
+        \\
+    );
+
+    var fooTable = table.getTable("foo");
+    assert(fooTable != null);
+    var barKey = fooTable.?.getKey("bar");
+    assert(barKey != null);
+    assert(std.mem.eql(u8, barKey.?.String, "foobar"));
 }
 
 test "table with dotted identifier" {
