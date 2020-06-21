@@ -32,19 +32,19 @@ pub const Value = union(enum) {
 
 pub const Table = struct {
     const Self = @This();
-    const TableMap = std.AutoHashMap([]const u8, *Table);
-    const KeyMap = std.AutoHashMap([]const u8, Value);
+    const TableMap = std.StringHashMap(*Table);
+    const KeyMap = std.StringHashMap(Value);
 
-    pub children: TableMap,
-    pub keys: KeyMap,
-    pub name: []const u8,
+    children: TableMap,
+    keys: KeyMap,
+    name: []const u8,
 
     allocator: *std.mem.Allocator,
 
     pub fn init(allocator: *std.mem.Allocator, name: []const u8) Self {
         return Self{
             .children = TableMap.init(allocator),
-            .keys = TableMap.init(allocator),
+            .keys = KeyMap.init(allocator),
             .name = name,
             .allocator = allocator,
         };
@@ -602,7 +602,7 @@ fn parseTable(allocator: *std.mem.Allocator, name: []const u8, contents: []const
             if (contents[i] == '=') {
                 i = getNextChar(contents, i);
             } else {
-                std.debug.warn("{} {}\n", name, key);
+                std.debug.warn("{} {}\n", .{ name, key });
                 return ParseError.ExpectedEquals;
             }
         }
