@@ -1,26 +1,25 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
-const Key = union(enum) {
+const DottedIdentifier = std.TailQueue([]const u8);
+
+pub const Key = union(enum) {
     None,
     DottedIdent: DottedIdentifier,
     Ident: []const u8,
+
+    pub fn deinit(key: *Key, allocator: *std.mem.Allocator) void {
+        if (key.* == .DottedIdent) {
+            var it = key.DottedIdent.first;
+            while (it) |node| : (it = node.next) {
+                key.DottedIdent.destroyNode(node, allocator);
+            }
+        }
+    }
 };
 
-pub const DynamicArray = std.TailQueue(Value);
-
-/// utility function helping to index the DynamicArray
-pub fn indexArray(array: DynamicArray, index: usize) ?Value {
-    var i = index;
-    var it = array.first;
-    while (it) |node| : (it = node.next) {
-        if (i == 0) {
-            return node.data;
-        }
-        i -= 1;
-    }
-    return null;
-}
+pub const DynamicArray = std.ArrayList(Value);
+pub const TableArray = std.ArrayList(*Table);
 
 pub const Value = union(enum) {
     None,
@@ -28,14 +27,45 @@ pub const Value = union(enum) {
     Boolean: bool,
     Integer: i64,
     Array: DynamicArray,
+    Table: *Table,
+    ManyTables: TableArray,
+
+    pub fn isTable(self: Value) bool {
+        return self == .Table;
+    }
+
+    pub fn isManyTables(self: Value) bool {
+        return self == .ManyTables;
+    }
+
+    pub fn deinit(self: *Value) void {
+        switch (self.*) {
+            .Array => |*array| {
+                for (array.items) |*item| {
+                    item.deinit();
+                }
+                array.deinit();
+            },
+            .Table => |table| {
+                table.deinit();
+            },
+            .ManyTables => |tables| {
+                for (tables.items) |table| {
+                    table.deinit();
+                }
+                tables.deinit();
+            },
+            else => {},
+        }
+    }
 };
 
 pub const Table = struct {
     const Self = @This();
-    const TableMap = std.StringHashMap(*Table);
+
+    const Error = error{ table_is_one, key_already_exists, expected_table_of_one };
     const KeyMap = std.StringHashMap(Value);
 
-    children: TableMap,
     keys: KeyMap,
     name: []const u8,
 
@@ -43,7 +73,6 @@ pub const Table = struct {
 
     pub fn init(allocator: *std.mem.Allocator, name: []const u8) Self {
         return Self{
-            .children = TableMap.init(allocator),
             .keys = KeyMap.init(allocator),
             .name = name,
             .allocator = allocator,
@@ -58,100 +87,106 @@ pub const Table = struct {
 
     /// Cleans up the table's keys and its children
     pub fn deinit(self: *Self) void {
-        // TODO: implement deinit
+        var it = self.keys.iterator();
+        while (it.next()) |node| {
+            node.value.deinit();
+        }
+        self.keys.deinit();
+        self.allocator.destroy(self);
+    }
+
+    fn indexIdentifier(ident: DottedIdentifier, index: usize) ?[]const u8 {
+        if (index >= ident.len) {
+            return null;
+        }
+
+        var it = ident.first;
+        var current: []const u8 = undefined;
+        var i = index;
+        while (it) |node| : (it = node.next) {
+            current = node.data;
+            if (i == 0) {
+                break;
+            }
+            i -= 1;
+        }
+
+        return current;
     }
 
     pub fn addKey(self: *Self, key: Key, value: Value) !void {
-        // TODO: test for key clobbering and give an error
         switch (key) {
             Key.None => {
                 return;
             },
             Key.Ident => |name| {
-                _ = try self.keys.put(name, value);
+                var old = try self.keys.put(name, value);
+                if (old) |_| {
+                    return Self.Error.key_already_exists;
+                }
             },
             Key.DottedIdent => |dotted| {
-                var currentTable: *Table = self;
+                var current_table: *Table = self;
                 var index: usize = 0;
                 while (index < dotted.len - 1) : (index += 1) {
-                    if (currentTable.children.getValue(indexIdentifier(dotted, index).?)) |table| {
-                        currentTable = table;
+                    if (current_table.keys.get(indexIdentifier(dotted, index).?)) |pair| {
+                        if (pair.value.isManyTables()) {
+                            return Self.Error.expected_table_of_one;
+                        }
+                        current_table = pair.value.Table;
                     } else {
                         var table = try self.allocator.create(Table);
                         table.* = Table.init(self.allocator, indexIdentifier(dotted, index).?);
-                        try currentTable.addTable(table);
-                        currentTable = table;
+                        try current_table.addTable(table);
+                        current_table = table;
                     }
                 }
-                _ = try currentTable.keys.put(indexIdentifier(dotted, index).?, value);
+                var old = try current_table.keys.put(indexIdentifier(dotted, index).?, value);
+                if (old) |_| {
+                    return Self.Error.key_already_exists;
+                }
             },
         }
     }
 
-    pub fn getKey(self: Self, key: []const u8) ?Value {
-        if (self.keys.getValue(key)) |value| {
-            return value;
-        }
-        // else {
-        //    var it = self.children.iterator();
-        //   while (it.next()) |nextChild| {
-        //        // recursion is unavoidable here
-        //        if (nextChild.value.getKey(key)) |value| {
-        //            return value;
-        //        }
-        //    }
-        // }
-        return null;
-    }
-
-    pub fn getTable(self: Self, name: []const u8) ?Table {
-        if (self.children.getValue(name)) |table| {
-            return table.*;
-        }
-        // else {
-        //    var it = self.children.iterator();
-        //    while (it.next()) |nextChild| {
-        //        // the recursion is unavoidable here
-        //        if (nextChild.value.getTable(name)) |table| {
-        //            return table;
-        //        }
-        //    }
-        //}
-        return null;
-    }
-
     pub fn addTable(self: *Self, table: *Table) !void {
-        _ = try self.children.put(table.name, table);
+        if (self.keys.getValue(table.name)) |value| {
+            return Self.Error.key_already_exists;
+        }
+        _ = try self.keys.put(table.name, Value{ .Table = table });
+    }
+
+    pub fn addManyTable(self: *Self, table: *Table) !void {
+        if (self.keys.get(table.name)) |pair| {
+            if (pair.value.isManyTables()) {
+                try pair.value.ManyTables.append(table);
+            } else {
+                return Self.Error.table_is_one;
+            }
+        } else {
+            var value = TableArray.init(self.allocator);
+            try value.append(table);
+            var old = try self.keys.put(table.name, Value{ .ManyTables = value });
+            // since we already tested if there's a table then this should be unreachable
+            if (old) |_| {
+                unreachable;
+            }
+        }
     }
 
     pub fn addNewTable(self: *Self, name: []const u8) !*Table {
         var table = try Table.create(self.allocator, name);
-        _ = try self.children.put(name, table);
+        var old = try self.keys.put(name, Value{ .Table = table });
+        if (old) |_| {
+            return Self.Error.key_already_exists;
+        }
         return table;
     }
 };
 
-const State = enum {
-    None,
-    EOF,
-    Identifier,
-    Table,
-    String,
-    Number,
-    Comment,
-};
-
-const ParseError = error{
-    UnexpectedEOF,
-    ExpectedNewline,
-    MalformedString,
-    MalformedKey,
-    MalformedTable,
-    ExpectedEquals,
-    ExpectedComma,
-    ExpectedCloseArray,
-    InvalidValue,
-};
+fn isEof(c: u8) bool {
+    return c == 0;
+}
 
 fn isIdentifier(c: u8) bool {
     return (c >= 65 and c <= 90) or (c >= 48 and c <= 57) or (c >= 97 and c <= 122) or c == '-' or c == '_';
@@ -163,6 +198,11 @@ fn isQuote(c: u8) bool {
 
 fn isWhitespace(c: u8) bool {
     return c == '\n' or c == '\t' or c == ' ' or c == '\r';
+}
+
+/// denotes whitespace that is allowed between a key and its value
+fn isPairWhitespace(c: u8) bool {
+    return c == '\t' or c == ' ';
 }
 
 fn isNumber(word: []const u8) bool {
@@ -218,529 +258,640 @@ fn toInteger(word: []const u8) i64 {
     return result;
 }
 
-/// function to easily get the next non-whitespace character
-fn getNextChar(contents: []const u8, start: usize) usize {
-    if (start >= contents.len) {
-        return start;
-    }
-    var index = start + 1;
-    while (index < contents.len and isWhitespace(contents[index])) {
-        index += 1;
+const Parser = struct {
+    const Error = error{
+        unexpected_eof,
+        expected_identifier,
+        expected_equals,
+        expected_newline,
+        expected_closing_brace,
+        malformed_table,
+        expected_comma,
+        invalid_value,
+    };
+
+    const Pair = struct {
+        key: Key,
+        value: Value,
+    };
+
+    allocator: *std.mem.Allocator,
+    global_table: *Table,
+    // denotes if contents have been heap allocated (from a file)
+    allocated: bool,
+    filename: []const u8,
+    contents: []const u8,
+    line: usize,
+    column: usize,
+    index: usize,
+
+    fn initWithFile(allocator: *std.mem.Allocator, filename: []const u8) !Parser {
+        var contents = try std.fs.cwd().readFileAlloc(allocator, filename, std.math.maxInt(usize));
+        var parser = try Parser.initWithString(allocator, contents);
+        parser.filename = filename;
+        parser.allocated = true;
+        return parser;
     }
 
-    if (index >= contents.len) {
-        return index;
+    fn initWithString(allocator: *std.mem.Allocator, str: []const u8) !Parser {
+        return Parser{
+            .allocator = allocator,
+            .global_table = try Table.create(allocator, ""),
+            .allocated = false,
+            .filename = "",
+            .contents = str,
+            .line = 1,
+            .column = 0,
+            .index = 0,
+        };
     }
 
-    return index;
-}
-
-fn getState(contents: []const u8, index: usize) State {
-    if (index >= contents.len) {
-        return State.EOF;
-    }
-    var c = contents[index];
-    if (isIdentifier(c)) {
-        return State.Identifier;
-    }
-    switch (c) {
-        '[' => {
-            return State.Table;
-        },
-        '"' => {
-            return State.String;
-        },
-        '-', '+' => {
-            return State.Number;
-        },
-        '#' => {
-            return State.Comment;
-        },
-        else => {
-            return State.None;
-        },
-    }
-}
-
-const DottedIdentifier = std.TailQueue([]const u8);
-
-fn indexIdentifier(ident: DottedIdentifier, index: usize) ?[]const u8 {
-    if (index >= ident.len) {
-        return null;
-    }
-
-    var it = ident.first;
-    var current: []const u8 = undefined;
-    var i = index;
-    while (it) |node| : (it = node.next) {
-        current = node.data;
-        if (i == 0) {
-            break;
+    pub fn deinit(self: *Parser) void {
+        if (self.allocated) {
+            self.allocator.free(self.contents);
         }
-        i -= 1;
     }
 
-    return current;
-}
+    fn rawNextChar(self: *Parser) u8 {
+        if (self.index >= self.contents.len) {
+            return 0;
+        }
 
-/// This assumes that the starting character aka contents[start] is a '.'
-fn parseDottedIdentifier(allocator: *std.mem.Allocator, contents: []const u8, start: *usize) !DottedIdentifier {
-    var result = DottedIdentifier.init();
-    if (start.* >= contents.len) {
-        return ParseError.UnexpectedEOF;
+        var c = self.contents[self.index];
+        if (c == '\n') {
+            self.line += 1;
+            self.column = 0;
+        }
+        self.index += 1;
+        self.column += 1;
+        return c;
     }
 
-    while (contents[start.*] == '.') {
-        var word: []const u8 = undefined;
-        start.* += 1;
-        if (isQuote(contents[start.*])) {
-            word = try parseString(contents, start);
+    fn nextChar(self: *Parser) u8 {
+        var c = self.rawNextChar();
+        // Skip any comments
+        while (c == '#') {
+            c = self.rawNextChar();
+            while (!isEof(c)) {
+                if (c == '\n') {
+                    break;
+                }
+                c = self.rawNextChar();
+            }
+
+            if (isEof(c)) {
+                return 0;
+            }
+        }
+
+        return c;
+    }
+
+    fn curChar(self: Parser) u8 {
+        if (self.index == 0) {
+            return self.contents[self.index];
+        } else if (self.index >= self.contents.len) {
+            return self.contents[self.contents.len - 1];
         } else {
-            word = try parseIdentifier(contents, start);
-        }
-        start.* += 1;
-        var node = try result.createNode(word, allocator);
-        result.append(node);
-        if (start.* >= contents.len) {
-            break;
+            return self.contents[self.index - 1];
         }
     }
 
-    start.* -= 1;
-    return result;
-}
-
-/// Assumes the starting character is a " or a '
-fn parseString(contents: []const u8, index: *usize) ParseError![]const u8 {
-    var start = index.*;
-    var i = index.*;
-    if (i >= contents.len) {
-        return ParseError.UnexpectedEOF;
-    }
-    // TODO: multiline strings
-    var quote = contents[i];
-
-    if (i + 1 >= contents.len) {
-        return ParseError.MalformedString;
-    }
-    i += 1;
-    var c = contents[i];
-    // TODO: escaped characters
-    while (c != quote) {
-        i += 1;
-        if (i >= contents.len) {
-            return ParseError.MalformedString;
-        }
-        c = contents[i];
-    }
-
-    index.* = i;
-    return contents[start + 1 .. i];
-}
-
-fn parseIdentifier(contents: []const u8, index: *usize) ![]const u8 {
-    var start = index.*;
-
-    var i = start;
-    if (i >= contents.len) {
-        return ParseError.UnexpectedEOF;
-    }
-    var c = contents[i];
-    while (isIdentifier(c)) {
-        i += 1;
-        if (i >= contents.len) {
-            return ParseError.UnexpectedEOF;
-        }
-        c = contents[i];
-    }
-
-    index.* = i - 1;
-    return contents[start .. index.* + 1];
-}
-
-fn convertIdentifierToValue(word: []const u8) !Value {
-    if (std.mem.eql(u8, word, "true")) {
-        return Value{ .Boolean = true };
-    } else if (std.mem.eql(u8, word, "false")) {
-        return Value{ .Boolean = false };
-    } else if (isNumber(word)) {
-        return Value{ .Integer = toInteger(word) };
-    } else {
-        return ParseError.InvalidValue;
-    }
-}
-
-fn parseArray(allocator: *std.mem.Allocator, contents: []const u8, index: *usize) anyerror!Value {
-    var array = DynamicArray.init();
-
-    var expectClosing = false;
-    var i = index.*;
-    var state = getState(contents, i);
-    while (i < contents.len) {
-        if (expectClosing and state != State.None) {
-            return ParseError.ExpectedComma;
-        }
-        switch (state) {
-            State.None => {
-                if (i < contents.len) {
-                    if (contents[i] == ']') {
-                        index.* = i;
-                        return Value{ .Array = array };
-                    }
-                }
-                i += 1;
-                state = getState(contents, i);
-                continue;
-            },
-            State.EOF => {
-                break;
-            },
-            State.Comment => {
-                i = skipComment(contents, i);
-                i += 1;
-                state = getState(contents, i);
-                continue;
-            },
-            State.Identifier => {
-                var word = try parseIdentifier(contents, &i);
-                var value = try convertIdentifierToValue(word);
-                var node = try array.createNode(value, allocator);
-                array.append(node);
-            },
-            State.String => {
-                var str = try parseString(contents, &i);
-                var value = Value{ .String = str };
-                var node = try array.createNode(value, allocator);
-                array.append(node);
-            },
-            State.Number => {
-                if (contents[i] == '+') {
-                    i += 1;
-                }
-                var word = try parseIdentifier(contents, &i);
-                if (isNumber(word)) {
-                    var value = Value{ .Integer = toInteger(word) };
-                    var node = try array.createNode(value, allocator);
-                    array.append(node);
-                } else {
-                    return ParseError.InvalidValue;
-                }
-            },
-            State.Table => {
-                i += 1;
-                var value = try parseArray(allocator, contents, &i);
-                var node = try array.createNode(value, allocator);
-                array.append(node);
-            },
+    fn peekChar(self: Parser) u8 {
+        if (self.index >= self.contents.len) {
+            return 0;
         }
 
-        i += 1;
-        if (i < contents.len) {
-            if (contents[i] != ',') {
-                expectClosing = true;
+        return self.contents[self.index];
+    }
+
+    fn getIndex(self: Parser) usize {
+        if (self.index == 0) {
+            return 0;
+        }
+        return self.index - 1;
+    }
+
+    fn nextCharIgnoreWhitespace(self: *Parser) u8 {
+        var c = self.nextChar();
+        while (isWhitespace(c)) {
+            c = self.nextChar();
+        }
+        return c;
+    }
+
+    fn ignoreWhitespace(self: *Parser) u8 {
+        var c = self.curChar();
+        while (isWhitespace(c)) {
+            c = self.nextChar();
+        }
+        return c;
+    }
+
+    fn isNewline(self: *Parser, c: u8) bool {
+        var n = c;
+        if (n == '\r') {
+            n = self.peekChar();
+        }
+        if (n == '\n') {
+            return true;
+        }
+        return false;
+    }
+
+    // parses `contents` and returns the global table
+    pub fn parse(self: *Parser) !*Table {
+        try self.parseTable(self.global_table);
+        return self.global_table;
+    }
+
+    fn parseTable(self: *Parser, table: *Table) anyerror!void {
+        var has_newline = true;
+        var c = self.nextChar();
+        while (!isEof(c)) {
+            c = self.ignoreWhitespace();
+
+            if (!has_newline) {
+                return Parser.Error.expected_newline;
             }
-        }
+            has_newline = false;
 
-        state = getState(contents, i);
-    }
+            // parse table
+            if (c == '[') {
+                var is_array = false;
+                if (self.peekChar() == '[') {
+                    c = self.nextChar();
+                    is_array = true;
+                }
+                c = self.nextChar();
 
-    return ParseError.ExpectedCloseArray;
-}
+                var table_key = try self.parseKeyIdentifier();
+                defer table_key.deinit(self.allocator);
+                c = self.curChar();
 
-fn skipComment(contents: []const u8, start: usize) usize {
-    var i = start;
-    while (i < contents.len) {
-        if (contents[i] == '\n') {
-            return i - 1;
-        }
-        i += 1;
-    }
-    return i;
-}
-
-fn parseKeyIdentifier(allocator: *std.mem.Allocator, contents: []const u8, index: *usize) !Key {
-    var word: []const u8 = undefined;
-    if (isQuote(contents[index.*])) {
-        word = try parseString(contents, index);
-    } else {
-        word = try parseIdentifier(contents, index);
-    }
-    if (index.* + 1 < contents.len and contents[index.* + 1] == '.') {
-        index.* += 1;
-        var dottedResult = try parseDottedIdentifier(allocator, contents, index);
-        var node = try dottedResult.createNode(word, allocator);
-        dottedResult.prepend(node);
-        return Key{ .DottedIdent = dottedResult };
-    } else {
-        return Key{ .Ident = word };
-    }
-}
-
-fn parseTable(allocator: *std.mem.Allocator, name: []const u8, contents: []const u8, index: *usize, root: bool) anyerror!*Table {
-    var table = try Table.create(allocator, name);
-    var i = index.*;
-    var key: Key = Key.None;
-    var value: Value = Value.None;
-    var state = getState(contents, index.*);
-    loop: while (i < contents.len) {
-        switch (state) {
-            State.None => {},
-            State.EOF => {
-                break :loop;
-            },
-            State.Comment => {
-                i = skipComment(contents, i);
-            },
-            State.Identifier => {
-                // boolean value identifier
-                if (key != Key.None and value == Value.None) {
-                    var word = try parseIdentifier(contents, &i);
-                    value = try convertIdentifierToValue(word);
-                } else {
-                    var keyIdentifier = try parseKeyIdentifier(allocator, contents, &i);
-                    // regular identifier
-                    if (key == Key.None) {
-                        key = keyIdentifier;
-                    } else {
-                        return ParseError.MalformedKey;
+                if (c != ']') {
+                    return Parser.Error.expected_closing_brace;
+                }
+                if (is_array) {
+                    c = self.nextChar();
+                    if (c != ']') {
+                        return Parser.Error.expected_closing_brace;
                     }
                 }
-            },
-            State.Table => {
-                // Deals with tables or arrays depending on if key == Key.None
-                if (key != Key.None and value == Value.None) {
-                    // treat this as an array
-                    i += 1;
-                    value = try parseArray(allocator, contents, &i);
-                } else {
-                    if (!root) {
-                        // rough
-                        i -= 1;
-                        break :loop;
-                    }
-                    i += 1;
-                    var tableKey = try parseKeyIdentifier(allocator, contents, &i);
-                    var tableName: []const u8 = undefined;
-                    var currentTable: *Table = table;
-                    switch (tableKey) {
-                        Key.None => {
-                            return ParseError.MalformedTable;
-                        },
-                        Key.Ident => |ident| {
-                            tableName = ident;
-                        },
-                        Key.DottedIdent => |dotted| {
-                            var it = dotted.first;
-                            while (it) |node| : (it = node.next) {
-                                if (node == dotted.last) {
-                                    break;
-                                }
-                                currentTable = try table.addNewTable(node.data);
+
+                var table_name: []const u8 = undefined;
+                var current_table = self.global_table;
+                switch (table_key) {
+                    Key.None => {
+                        return Parser.Error.malformed_table;
+                    },
+                    Key.Ident => |ident| {
+                        table_name = ident;
+                    },
+                    Key.DottedIdent => |dotted| {
+                        // iterate through the identifiers and create any missing tables along the way
+                        var it = dotted.first;
+                        while (it) |node| : (it = node.next) {
+                            if (node == dotted.last) {
+                                break;
                             }
-                            tableName = dotted.last.?.data;
-                        },
-                    }
-                    i += 1;
-                    if (contents[i] != ']') {
-                        return ParseError.MalformedTable;
-                    }
-                    var newTable = try parseTable(allocator, tableName, contents, &i, false);
-                    try currentTable.addTable(newTable);
+                            if (current_table.keys.get(node.data)) |pair| {
+                                if (pair.value.isManyTables()) {
+                                    return Parser.Error.malformed_table;
+                                }
+                                current_table = pair.value.Table;
+                            } else {
+                                current_table = try current_table.addNewTable(node.data);
+                            }
+                        }
+                        table_name = dotted.last.?.data;
+                    },
                 }
-            },
-            State.Number => {
-                // Deals with numbers starting with +
-                if (contents[i] == '+') {
-                    i += 1;
-                }
-                var word = try parseIdentifier(contents, &i);
-                if (isNumber(word)) {
-                    value = Value{ .Integer = toInteger(word) };
+
+                var new_table = try Table.create(self.allocator, table_name);
+                // add before parsing so then if adding returns an error we get the proper line/column
+                if (is_array) {
+                    try current_table.addManyTable(new_table);
                 } else {
-                    return ParseError.InvalidValue;
+                    try current_table.addTable(new_table);
                 }
-            },
-            State.String => {
-                if (key == Key.None) {
-                    var strKey = try parseKeyIdentifier(allocator, contents, &i);
-                    key = strKey;
-                } else if (value == Value.None) {
-                    var str = try parseString(contents, &i);
-                    value = Value{ .String = str };
-                }
-            },
-        }
-        // if we have a key and a value pair
-        if (value != Value.None and key != Key.None) {
-            // add the key value pair to the current table
-            try table.addKey(key, value);
-            value = Value.None;
-            key = Key.None;
+                try self.parseTable(new_table);
 
-            var peek = getNextChar(contents, i);
-            if (peek < contents.len and contents[peek] == '#') {
-                i = skipComment(contents, peek);
-            }
-
-            // TODO: support Windows line endings \r\n
-            // enforce a new line after a key-value pair
-            i += 1;
-            if (i < contents.len) {
-                if (contents[i] == '\r') {
-                    i += 1;
-                }
-                if (contents[i] != '\n') {
-                    return ParseError.ExpectedNewline;
-                }
-            }
-        }
-
-        i = getNextChar(contents, i);
-
-        // if we have a key but not a value then the next (non-whitespace) character must be an =
-        if (value == Value.None and key != Key.None) {
-            if (contents[i] == '=') {
-                i = getNextChar(contents, i);
+                // If there's a new table then this table can't have any more pairs
+                // Even if this break was removed no pairs would be parsed and we would end up with an error from parsePair
+                break;
             } else {
-                std.debug.warn("{} {}\n", .{ name, key });
-                return ParseError.ExpectedEquals;
-            }
-        }
 
-        state = getState(contents, i);
+                // if is eof after table declaration then stop parsing table
+                if (isEof(c)) {
+                    break;
+                }
+                var pair = try self.parsePair();
+                defer pair.key.deinit(self.allocator);
+                try table.addKey(pair.key, pair.value);
+
+                c = self.curChar();
+                // ignore whitespace after pair
+                while (isPairWhitespace(c)) {
+                    c = self.nextChar();
+                }
+
+                if (self.isNewline(c)) {
+                    has_newline = true;
+                }
+            }
+            c = self.nextChar();
+        }
     }
 
-    index.* = i;
-    return table;
+    fn parsePair(self: *Parser) !Pair {
+        var c = self.curChar();
+        if (isEof(c)) {
+            return Parser.Error.expected_identifier;
+        }
+
+        var key = try self.parseKeyIdentifier();
+
+        // ignore whitespace before equals
+        c = self.curChar();
+        while (isPairWhitespace(c)) {
+            c = self.nextChar();
+        }
+
+        if (c != '=') {
+            return Parser.Error.expected_equals;
+        }
+
+        c = self.nextChar();
+        // ignore whitespace after equals
+        while (isPairWhitespace(c)) {
+            c = self.nextChar();
+        }
+
+        var value = try self.parseValue();
+
+        return Pair{
+            .key = key,
+            .value = value,
+        };
+    }
+
+    fn convertIdentifierToValue(word: []const u8) !Value {
+        if (std.mem.eql(u8, word, "true")) {
+            return Value{ .Boolean = true };
+        } else if (std.mem.eql(u8, word, "false")) {
+            return Value{ .Boolean = false };
+        } else if (isNumber(word)) {
+            return Value{ .Integer = toInteger(word) };
+        } else {
+            return Parser.Error.invalid_value;
+        }
+    }
+
+    fn parseValue(self: *Parser) anyerror!Value {
+        var c = self.curChar();
+        if (isQuote(c)) {
+            return Value{ .String = try self.parseString(c) };
+        }
+
+        if (c == '[') {
+            return try self.parseArray();
+        }
+
+        var ident = try self.parseIdentifier();
+        return try Parser.convertIdentifierToValue(ident);
+    }
+
+    fn parseArray(self: *Parser) anyerror!Value {
+        var result = DynamicArray.init(self.allocator);
+        var c = self.nextChar();
+
+        var has_comma = true;
+        while (c != ']' and !isEof(c)) {
+            if (!has_comma) {
+                return Parser.Error.expected_comma;
+            }
+            has_comma = false;
+
+            c = self.ignoreWhitespace();
+
+            var value = try self.parseValue();
+            try result.append(value);
+
+            c = self.ignoreWhitespace();
+            if (c == ',') {
+                c = self.nextCharIgnoreWhitespace();
+                has_comma = true;
+            } else if (c != ']') {
+                return Parser.Error.expected_closing_brace;
+            }
+        }
+
+        if (isEof(c)) {
+            return Parser.Error.unexpected_eof;
+        }
+
+        // eat the ]
+        _ = self.nextChar();
+
+        return Value{ .Array = result };
+    }
+
+    fn parseWord(self: *Parser) ![]const u8 {
+        var c = self.curChar();
+        if (isQuote(c)) {
+            return try self.parseString(c);
+        }
+        if (isIdentifier(c)) {
+            return try self.parseIdentifier();
+        }
+        return Parser.Error.expected_identifier;
+    }
+
+    fn parseKeyIdentifier(self: *Parser) !Key {
+        var keyValue = try self.parseWord();
+
+        var c = self.curChar();
+        if (c == '.') {
+            var dottedResult = try self.parseDottedIdentifier();
+            var node = try dottedResult.createNode(keyValue, self.allocator);
+            dottedResult.prepend(node);
+            return Key{ .DottedIdent = dottedResult };
+        } else {
+            return Key{ .Ident = keyValue };
+        }
+    }
+
+    // expects self.curChar() to be a .
+    fn parseDottedIdentifier(self: *Parser) !DottedIdentifier {
+        var result = DottedIdentifier.init();
+
+        var c = self.curChar();
+        while (c == '.') {
+            var ident: []const u8 = undefined;
+            c = self.nextChar();
+            if (isQuote(c)) {
+                ident = try self.parseString(c);
+            } else {
+                ident = try self.parseIdentifier();
+            }
+            var node = try result.createNode(ident, self.allocator);
+            result.append(node);
+            c = self.curChar();
+        }
+
+        return result;
+    }
+
+    fn parseString(self: *Parser, opening: u8) ![]const u8 {
+        var c = self.rawNextChar();
+        var start = self.getIndex();
+        while (c != opening and !isEof(c)) {
+            c = self.rawNextChar();
+        }
+
+        if (isEof(c)) {
+            return Parser.Error.unexpected_eof;
+        }
+
+        // eat the closing quote
+        var ending = self.getIndex();
+        c = self.nextChar();
+
+        return self.contents[start..ending];
+    }
+
+    fn parseIdentifier(self: *Parser) ![]const u8 {
+        var start = self.getIndex();
+        var c = self.nextChar();
+        while (isIdentifier(c) and !isEof(c)) {
+            c = self.nextChar();
+        }
+
+        if (isEof(c)) {
+            return self.contents[start..];
+        }
+
+        return self.contents[start..self.getIndex()];
+    }
+};
+
+pub fn parseFile(allocator: *std.mem.Allocator, filename: []const u8, out_parser: ?*Parser) !*Table {
+    var parser = try Parser.initWithFile(allocator, filename);
+    if (out_parser) |op| {
+        op.* = parser;
+        return try op.parse();
+    }
+    return try parser.parse();
 }
 
-pub fn parseFile(allocator: *std.mem.Allocator, filename: []const u8) !*Table {
-    var contents = try std.io.readFileAlloc(allocator, filename);
-    return parseContents(allocator, contents);
-}
-
-pub fn parseContents(allocator: *std.mem.Allocator, contents: []const u8) !*Table {
-    var index: usize = 0;
+pub fn parseContents(allocator: *std.mem.Allocator, contents: []const u8, out_parser: ?*Parser) !*Table {
 
     // TODO: time values
     // TODO: float values
     // TODO: inline tables
-    // TODO: array of tables
-
-    var globalTable = try parseTable(allocator, "", contents, &index, true);
-
-    return globalTable;
+    var parser = try Parser.initWithString(allocator, contents);
+    if (out_parser) |op| {
+        op.* = parser;
+        return try op.parse();
+    }
+    return try parser.parse();
 }
 
 test "test.toml file" {
-    //    var table = try parseFile(std.heap.c_allocator, "test/test.toml");
+    const filename = "test/test.toml";
+    const allocator = std.testing.allocator;
+
+    var parser: Parser = undefined;
+    defer parser.deinit();
+
+    var table = try parseFile(allocator, filename, &parser);
+    defer table.deinit();
+}
+
+test "basic.toml file" {
+    const filename = "test/basic.toml";
+    const allocator = std.testing.allocator;
+
+    var parser: Parser = undefined;
+    defer parser.deinit();
+
+    var table = try parseFile(allocator, filename, &parser);
+    defer table.deinit();
+
+    assert(table.keys.getValue("foo") != null);
+    if (table.keys.getValue("foo")) |foo| {
+        assert(foo == .Table);
+        assert(foo.Table.keys.getValue("hi") != null);
+        if (foo.Table.keys.getValue("hi")) |value| {
+            assert(std.mem.eql(u8, value.String, "there"));
+        }
+    }
+}
+
+test "comment before newline" {
+    var table = try parseContents(std.testing.allocator,
+        \\foo="test" # foo
+        \\[bar]
+        \\
+    , null);
+    defer table.deinit();
+
+    var foo = table.keys.getValue("foo").?;
+    assert(std.mem.eql(u8, foo.String, "test"));
+}
+
+test "whitespace before table" {
+    var table = try parseContents(std.testing.allocator,
+        \\      [foo.hi]
+        \\
+        \\        bar    =       1234       # derp              
+        \\
+        \\  [bar]
+        \\  
+        \\    test = true
+    , null);
+    defer table.deinit();
+
+    var foo = table.keys.getValue("foo").?;
+    var hi = foo.Table.keys.getValue("hi").?;
+    var bar = hi.Table.keys.getValue("bar").?;
+    assert(bar.Integer == 1234);
+}
+
+test "multiple key identifiers" {
+    var table = try parseContents(std.testing.allocator,
+        \\ [foo.bar.foobar]
+        \\
+    , null);
+    defer table.deinit();
+}
+
+test "multi-line arrays" {
+    var table = try parseContents(std.testing.allocator,
+        \\ array = [
+        \\ "]",
+        \\ # inner comment
+        \\ ]
+    , null);
+    defer table.deinit();
 }
 
 test "key value pair" {
-    var table = try parseContents(std.heap.c_allocator,
+    var table = try parseContents(std.testing.allocator,
         \\ foo="hello"
         \\
-    );
+    , null);
+    defer table.deinit();
 
-    assert(table.getKey("foo") != null);
-    if (table.getKey("foo")) |value| {
+    assert(table.keys.getValue("foo") != null);
+    if (table.keys.getValue("foo")) |value| {
         assert(std.mem.eql(u8, value.String, "hello"));
     }
 }
 
 test "table" {
-    var table = try parseContents(std.heap.c_allocator,
+    var table = try parseContents(std.testing.allocator,
         \\ [foo]
         \\
-    );
-    assert(table.getTable("foo") != null);
+    , null);
+    defer table.deinit();
+    assert(table.keys.getValue("foo") != null);
 }
 
 test "comment" {
-    var table = try parseContents(std.heap.c_allocator,
+    var table = try parseContents(std.testing.allocator,
         \\ # [foo]
         \\
-    );
-    assert(table.getTable("foo") == null);
+    , null);
+    defer table.deinit();
+    assert(table.keys.getValue("foo") == null);
 }
 
 test "comment inside array" {
-    var table = try parseContents(std.heap.c_allocator,
+    var table = try parseContents(std.testing.allocator,
         \\ foo=[ # hello there
         \\ 123, 456
         \\ ]
         \\
-    );
-    var fooKey = table.getKey("foo");
+    , null);
+    defer table.deinit();
+    var fooKey = table.keys.getValue("foo");
     assert(fooKey != null);
     if (fooKey) |foo| {
-        assert(foo.Array.len == 2);
+        assert(foo.Array.items.len == 2);
+        assert(foo.Array.items[0].Integer == 123);
+        assert(foo.Array.items[1].Integer == 456);
     }
 }
 
 test "table key value pair" {
-    var table = try parseContents(std.heap.c_allocator,
+    var table = try parseContents(std.testing.allocator,
         \\ [foo]
         \\ key = "bar"
         \\
-    );
+    , null);
+    defer table.deinit();
 
-    assert(table.getTable("foo") != null);
-    if (table.getTable("foo")) |foo| {
-        assert(foo.getKey("key") != null);
-        if (foo.getKey("key")) |value| {
+    assert(table.keys.getValue("foo") != null);
+    if (table.keys.getValue("foo")) |foo| {
+        assert(foo.Table.keys.getValue("key") != null);
+        if (foo.Table.keys.getValue("key")) |value| {
             assert(std.mem.eql(u8, value.String, "bar"));
         }
     }
 }
 
 test "dotted key with string" {
-    var table = try parseContents(std.heap.c_allocator,
+    var table = try parseContents(std.testing.allocator,
         \\ key."ziglang.org" = "bar"
         \\
-    );
+    , null);
+    defer table.deinit();
 
-    assert(table.getTable("key") != null);
-    if (table.getTable("key")) |value| {
-        if (value.getKey("ziglang.org")) |zig| {
+    assert(table.keys.getValue("key") != null);
+    if (table.keys.getValue("key")) |value| {
+        if (value.Table.keys.getValue("ziglang.org")) |zig| {
             assert(std.mem.eql(u8, zig.String, "bar"));
         }
     }
 }
 
 test "multiple tables" {
-    var table = try parseContents(std.heap.c_allocator,
+    var table = try parseContents(std.testing.allocator,
         \\ [foo]
         \\ key="bar"
         \\ [derp]
         \\ another="foobar"
         \\
-    );
+    , null);
+    defer table.deinit();
 
-    assert(table.getTable("foo") != null);
-    if (table.getTable("foo")) |foo| {
-        assert(foo.getKey("key") != null);
-        if (foo.getKey("key")) |value| {
+    assert(table.keys.getValue("foo") != null);
+    if (table.keys.getValue("foo")) |foo| {
+        assert(foo.Table.keys.getValue("key") != null);
+        if (foo.Table.keys.getValue("key")) |value| {
             assert(std.mem.eql(u8, value.String, "bar"));
         }
     }
 
-    assert(table.getTable("derp") != null);
-    if (table.getTable("derp")) |foo| {
-        assert(foo.getKey("another") != null);
-        if (foo.getKey("another")) |value| {
+    assert(table.keys.getValue("derp") != null);
+    if (table.keys.getValue("derp")) |foo| {
+        assert(foo.Table.keys.getValue("another") != null);
+        if (foo.Table.keys.getValue("another")) |value| {
             assert(std.mem.eql(u8, value.String, "foobar"));
         }
     }
 }
 
 test "key value pair with string key" {
-    var table = try parseContents(std.heap.c_allocator,
+    var table = try parseContents(std.testing.allocator,
         \\ "foo"="hello"
         \\
-    );
+    , null);
+    defer table.deinit();
 
-    var keyValue = table.getKey("foo");
+    var keyValue = table.keys.getValue("foo");
     assert(keyValue != null);
     if (keyValue) |value| {
         assert(std.mem.eql(u8, value.String, "hello"));
@@ -748,15 +899,16 @@ test "key value pair with string key" {
 }
 
 test "dotted key value pair" {
-    var table = try parseContents(std.heap.c_allocator,
+    var table = try parseContents(std.testing.allocator,
         \\ foo.bar="hello"
         \\
-    );
+    , null);
+    defer table.deinit();
 
-    var fooTable = table.getTable("foo");
+    var fooTable = table.keys.getValue("foo");
     assert(fooTable != null);
     if (fooTable) |foo| {
-        var barKey = foo.getKey("bar");
+        var barKey = foo.Table.keys.getValue("bar");
         assert(barKey != null);
         if (barKey) |value| {
             assert(std.mem.eql(u8, value.String, "hello"));
@@ -765,18 +917,19 @@ test "dotted key value pair" {
 }
 
 test "dotted key value pair within table" {
-    var table = try parseContents(std.heap.c_allocator,
+    var table = try parseContents(std.testing.allocator,
         \\ [foobar]
         \\ foo.bar="hello"
         \\
-    );
+    , null);
+    defer table.deinit();
 
-    var fooBarTable = table.getTable("foobar");
+    var fooBarTable = table.keys.getValue("foobar");
     if (fooBarTable) |foobar| {
-        var fooTable = foobar.getTable("foo");
+        var fooTable = foobar.Table.keys.getValue("foo");
         assert(fooTable != null);
         if (fooTable) |foo| {
-            var barKey = foo.getKey("bar");
+            var barKey = foo.Table.keys.getValue("bar");
             assert(barKey != null);
             if (barKey) |value| {
                 assert(std.mem.eql(u8, value.String, "hello"));
@@ -786,12 +939,13 @@ test "dotted key value pair within table" {
 }
 
 test "key value pair boolean true" {
-    var table = try parseContents(std.heap.c_allocator,
-        \\ foo=true
+    var table = try parseContents(std.testing.allocator,
+        \\foo=true
         \\
-    );
+    , null);
+    defer table.deinit();
 
-    var fooKey = table.getKey("foo");
+    var fooKey = table.keys.getValue("foo");
     assert(fooKey != null);
     if (fooKey) |foo| {
         assert(foo.Boolean == true);
@@ -799,12 +953,13 @@ test "key value pair boolean true" {
 }
 
 test "key value pair boolean false" {
-    var table = try parseContents(std.heap.c_allocator,
+    var table = try parseContents(std.testing.allocator,
         \\ foo=false
         \\
-    );
+    , null);
+    defer table.deinit();
 
-    var fooKey = table.getKey("foo");
+    var fooKey = table.keys.getValue("foo");
     assert(fooKey != null);
     if (fooKey) |foo| {
         assert(foo.Boolean == false);
@@ -812,12 +967,13 @@ test "key value pair boolean false" {
 }
 
 test "key value pair integer" {
-    var table = try parseContents(std.heap.c_allocator,
+    var table = try parseContents(std.testing.allocator,
         \\ foo=1234
         \\
-    );
+    , null);
+    defer table.deinit();
 
-    var fooKey = table.getKey("foo");
+    var fooKey = table.keys.getValue("foo");
     assert(fooKey != null);
     if (fooKey) |foo| {
         assert(foo.Integer == 1234);
@@ -825,12 +981,13 @@ test "key value pair integer" {
 }
 
 test "key value pair integer" {
-    var table = try parseContents(std.heap.c_allocator,
+    var table = try parseContents(std.testing.allocator,
         \\ foo=1_1234_3_4
         \\
-    );
+    , null);
+    defer table.deinit();
 
-    var fooKey = table.getKey("foo");
+    var fooKey = table.keys.getValue("foo");
     assert(fooKey != null);
     if (fooKey) |foo| {
         assert(foo.Integer == 1123434);
@@ -838,12 +995,13 @@ test "key value pair integer" {
 }
 
 test "key value pair negative integer" {
-    var table = try parseContents(std.heap.c_allocator,
+    var table = try parseContents(std.testing.allocator,
         \\ foo=-1234
         \\
-    );
+    , null);
+    defer table.deinit();
 
-    var fooKey = table.getKey("foo");
+    var fooKey = table.keys.getValue("foo");
     assert(fooKey != null);
     if (fooKey) |foo| {
         assert(foo.Integer == -1234);
@@ -851,12 +1009,13 @@ test "key value pair negative integer" {
 }
 
 test "key value pair positive integer" {
-    var table = try parseContents(std.heap.c_allocator,
+    var table = try parseContents(std.testing.allocator,
         \\ foo=+1234
         \\
-    );
+    , null);
+    defer table.deinit();
 
-    var fooKey = table.getKey("foo");
+    var fooKey = table.keys.getValue("foo");
     assert(fooKey != null);
     if (fooKey) |foo| {
         assert(foo.Integer == 1234);
@@ -864,19 +1023,20 @@ test "key value pair positive integer" {
 }
 
 test "multiple key value pair" {
-    var table = try parseContents(std.heap.c_allocator,
+    var table = try parseContents(std.testing.allocator,
         \\ foo=1234
         \\ bar=4321
         \\
-    );
+    , null);
+    defer table.deinit();
 
-    var fooKey = table.getKey("foo");
+    var fooKey = table.keys.getValue("foo");
     assert(fooKey != null);
     if (fooKey) |foo| {
         assert(foo.Integer == 1234);
     }
 
-    var barKey = table.getKey("bar");
+    var barKey = table.keys.getValue("bar");
     assert(barKey != null);
     if (barKey) |bar| {
         assert(bar.Integer == 4321);
@@ -884,92 +1044,113 @@ test "multiple key value pair" {
 }
 
 test "key value simple array" {
-    var table = try parseContents(std.heap.c_allocator,
+    var table = try parseContents(std.testing.allocator,
         \\ foo=[]
         \\
-    );
+    , null);
+    defer table.deinit();
 
-    var fooKey = table.getKey("foo");
+    var fooKey = table.keys.getValue("foo");
     assert(fooKey != null);
+    assert(fooKey.? == .Array);
 }
 
 test "key value multiple element array" {
-    var table = try parseContents(std.heap.c_allocator,
+    var table = try parseContents(std.testing.allocator,
         \\ foo=[ 1234, 5678, true, false, "hello" ]
         \\
-    );
+    , null);
+    defer table.deinit();
 
-    var fooKey = table.getKey("foo");
+    var fooKey = table.keys.getValue("foo");
     assert(fooKey != null);
     if (fooKey) |foo| {
-        assert(foo.Array.len == 5);
-        assert(std.mem.eql(u8, indexArray(foo.Array, 4).?.String, "hello"));
-        assert(indexArray(foo.Array, 3).?.Boolean == false);
-        assert(indexArray(foo.Array, 2).?.Boolean == true);
-        assert(indexArray(foo.Array, 1).?.Integer == 5678);
-        assert(indexArray(foo.Array, 0).?.Integer == 1234);
+        assert(foo.Array.items.len == 5);
+        assert(std.mem.eql(u8, foo.Array.items[4].String, "hello"));
+        assert(foo.Array.items[3].Boolean == false);
+        assert(foo.Array.items[2].Boolean == true);
+        assert(foo.Array.items[1].Integer == 5678);
+        assert(foo.Array.items[0].Integer == 1234);
     }
 }
 
 test "key value array in array" {
-    var table = try parseContents(std.heap.c_allocator,
+    var table = try parseContents(std.testing.allocator,
         \\ foo=[[[[[1234]], 57789, [1234, 578]]]]
         \\
-    );
+    , null);
+    defer table.deinit();
 
-    var fooKey = table.getKey("foo");
+    var fooKey = table.keys.getValue("foo");
     assert(fooKey != null);
     if (fooKey) |foo| {
-        assert(foo.Array.len == 1);
-        var array1 = indexArray(foo.Array, 0).?;
-        assert(array1.Array.len == 1);
-        var array2 = indexArray(array1.Array, 0).?;
-        assert(array2.Array.len == 3);
-        assert(indexArray(array2.Array, 1).?.Integer == 57789);
-        var array3 = indexArray(array2.Array, 0).?;
-        assert(array3.Array.len == 1);
-        var array4 = indexArray(array3.Array, 0).?;
-        assert(array3.Array.len == 1);
-        assert(indexArray(array4.Array, 0).?.Integer == 1234);
+        var items = foo.Array.items;
+        assert(foo.Array.items.len == 1);
+        var array1 = items[0];
+        assert(array1.Array.items.len == 1);
+        var array2 = array1.Array.items[0];
+        assert(array2.Array.items.len == 3);
+        assert(array2.Array.items[1].Integer == 57789);
+        var array3 = array2.Array.items[0];
+        assert(array3.Array.items.len == 1);
+        var array4 = array3.Array.items[0];
+        assert(array3.Array.items.len == 1);
+        assert(array4.Array.items[0].Integer == 1234);
     }
 }
 
 test "key with string first" {
-    var table = try parseContents(std.heap.c_allocator,
+    var table = try parseContents(std.testing.allocator,
         \\ "foo".bar = "foobar"
         \\
-    );
+    , null);
+    defer table.deinit();
 
-    var fooTable = table.getTable("foo");
-    assert(fooTable != null);
-    var barKey = fooTable.?.getKey("bar");
-    assert(barKey != null);
-    assert(std.mem.eql(u8, barKey.?.String, "foobar"));
+    var fooTable = table.keys.getValue("foo").?;
+    var barKey = fooTable.Table.keys.getValue("bar").?;
+    assert(std.mem.eql(u8, barKey.String, "foobar"));
 }
 
 test "table with dotted identifier" {
-    var table = try parseContents(std.heap.c_allocator,
+    var table = try parseContents(std.testing.allocator,
         \\ [foo.bar]
         \\ testKey = "hello"
         \\
-    );
+    , null);
+    defer table.deinit();
 
-    var fooTable = table.getTable("foo");
-    assert(fooTable != null);
-    if (fooTable) |foo| {
-        var barTable = foo.getTable("bar");
-        assert(barTable != null);
-        if (barTable) |bar| {
-            var testKey = bar.getKey("testKey");
-            assert(testKey != null);
-            assert(std.mem.eql(u8, testKey.?.String, "hello"));
-        }
-    }
+    var foo = table.keys.getValue("foo").?;
+    var bar = foo.Table.keys.getValue("bar").?;
+    var testKey = bar.Table.keys.getValue("testKey").?;
+    assert(std.mem.eql(u8, testKey.String, "hello"));
+}
+
+test "array of tables" {
+    var table = try parseContents(std.testing.allocator,
+        \\[[foo]]
+        \\bar = "hi"
+        \\[[foo]]
+        \\bar = "test"
+    , null);
+    defer table.deinit();
+
+    var foo = table.keys.getValue("foo").?;
+    assert(foo.isManyTables());
+    assert(foo.ManyTables.items.len == 2);
+
+    var one = foo.ManyTables.items[0];
+    var bar = one.keys.getValue("bar").?;
+    assert(std.mem.eql(u8, bar.String, "hi"));
+
+    var two = foo.ManyTables.items[1];
+    var bar2 = two.keys.getValue("bar").?;
+    assert(std.mem.eql(u8, bar2.String, "test"));
 }
 
 test "window line endings" {
-    var table = try parseContents(std.heap.c_allocator, "foo=1234\r\nbar=5789\n");
+    var table = try parseContents(std.testing.allocator, "foo=1234\r\nbar=5789\r\n", null);
+    defer table.deinit();
 
-    assert(table.getKey("foo") != null);
-    assert(table.getKey("bar") != null);
+    assert(table.keys.getValue("foo") != null);
+    assert(table.keys.getValue("bar") != null);
 }

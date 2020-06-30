@@ -18,7 +18,7 @@ There is currently a lack of documentation but the tests contained should give e
 - [ ] Multi-line strings
 - [ ] String escapes
 - [ ] Inline tables
-- [ ] Array of tables
+- [x] Array of tables
 - [ ] Time and date
 
 ## Building and Usage
