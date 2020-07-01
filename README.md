@@ -17,7 +17,7 @@ There is currently a lack of documentation but the tests contained should give e
 - [ ] Hexadecimal, octal, and binary numbers
 - [ ] Multi-line strings
 - [ ] String escapes
-- [ ] Inline tables
+- [x] Inline tables
 - [x] Array of tables
 - [ ] Time and date
 

@@ -268,6 +268,7 @@ pub const Parser = struct {
         malformed_table,
         expected_comma,
         invalid_value,
+        unexpected_newline,
     };
 
     const Pair = struct {
@@ -554,8 +555,14 @@ pub const Parser = struct {
             return Value{ .String = try self.parseString(c) };
         }
 
+        // array
         if (c == '[') {
             return try self.parseArray();
+        }
+
+        // inline table
+        if (c == '{') {
+            return try self.parseInlineTable();
         }
 
         var ident = try self.parseIdentifier();
@@ -595,6 +602,59 @@ pub const Parser = struct {
         _ = self.nextChar();
 
         return Value{ .Array = result };
+    }
+
+    fn parseInlineTable(self: *Parser) anyerror!Value {
+        var result = try Table.create(self.allocator, "");
+
+        var c = self.nextChar();
+
+        var has_comma = true;
+        while (c != '}' and !isEof(c)) {
+            if (!has_comma) {
+                return Parser.Error.expected_comma;
+            }
+            has_comma = false;
+
+            if (self.isNewline(c)) {
+                return Parser.Error.unexpected_newline;
+            }
+
+            while (isPairWhitespace(c)) {
+                c = self.nextChar();
+            }
+
+            var pair = try self.parsePair();
+            try result.addKey(pair.key, pair.value);
+
+            c = self.curChar();
+            // ignore all whitespace that is allowed after a pair
+            // then check for a newline
+            while (isPairWhitespace(c)) {
+                c = self.nextChar();
+            }
+
+            if (self.isNewline(c)) {
+                return Parser.Error.unexpected_newline;
+            }
+
+            if (c == ',') {
+                // grab the next char ignoring any pair whitespace
+                c = self.nextChar();
+                while (isPairWhitespace(c)) {
+                    c = self.nextChar();
+                }
+                has_comma = true;
+            }
+        }
+
+        if (isEof(c)) {
+            return Parser.Error.unexpected_eof;
+        }
+
+        _ = self.nextChar();
+
+        return Value{ .Table = result };
     }
 
     fn parseWord(self: *Parser) ![]const u8 {
@@ -1153,4 +1213,40 @@ test "window line endings" {
 
     assert(table.keys.getValue("foo") != null);
     assert(table.keys.getValue("bar") != null);
+}
+
+test "empty inline table" {
+    var table = try parseContents(std.testing.allocator,
+        \\foo = {}
+    , null);
+    defer table.deinit();
+
+    assert(table.keys.getValue("foo") != null);
+    assert(table.keys.getValue("foo").? == .Table);
+}
+
+test "inline table with keys" {
+    var table = try parseContents(std.testing.allocator,
+        \\foo = { bar = 1234, foobar = "test string" }
+    , null);
+    defer table.deinit();
+
+    var foo = table.keys.getValue("foo").?.Table;
+    var bar = foo.keys.getValue("bar").?.Integer;
+    assert(bar == 1234);
+
+    var foobar = foo.keys.getValue("foobar").?.String;
+    assert(std.mem.eql(u8, foobar, "test string"));
+}
+
+test "inline table with inline table" {
+    var table = try parseContents(std.testing.allocator,
+        \\foo = { bar = { foobar = "test string" } }
+    , null);
+    defer table.deinit();
+
+    var foo = table.keys.getValue("foo").?.Table;
+    var bar = foo.keys.getValue("bar").?.Table;
+    var foobar = bar.keys.getValue("foobar").?.String;
+    assert(std.mem.eql(u8, foobar, "test string"));
 }
