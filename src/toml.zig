@@ -258,7 +258,7 @@ fn toInteger(word: []const u8) i64 {
     return result;
 }
 
-const Parser = struct {
+pub const Parser = struct {
     const Error = error{
         unexpected_eof,
         expected_identifier,
@@ -285,7 +285,7 @@ const Parser = struct {
     column: usize,
     index: usize,
 
-    fn initWithFile(allocator: *std.mem.Allocator, filename: []const u8) !Parser {
+    pub fn initWithFile(allocator: *std.mem.Allocator, filename: []const u8) !Parser {
         var contents = try std.fs.cwd().readFileAlloc(allocator, filename, std.math.maxInt(usize));
         var parser = try Parser.initWithString(allocator, contents);
         parser.filename = filename;
@@ -293,7 +293,7 @@ const Parser = struct {
         return parser;
     }
 
-    fn initWithString(allocator: *std.mem.Allocator, str: []const u8) !Parser {
+    pub fn initWithString(allocator: *std.mem.Allocator, str: []const u8) !Parser {
         return Parser{
             .allocator = allocator,
             .global_table = try Table.create(allocator, ""),
