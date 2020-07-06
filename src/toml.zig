@@ -26,6 +26,7 @@ pub const Value = union(enum) {
     String: []const u8,
     Boolean: bool,
     Integer: i64,
+    Float: f64,
     Array: DynamicArray,
     Table: *Table,
     ManyTables: TableArray,
@@ -200,6 +201,10 @@ fn isWhitespace(c: u8) bool {
     return c == '\n' or c == '\t' or c == ' ' or c == '\r';
 }
 
+fn isNumChar(c: u8) bool {
+    return c >= 48 and c <= 57;
+}
+
 /// denotes whitespace that is allowed between a key and its value
 fn isPairWhitespace(c: u8) bool {
     return c == '\t' or c == ' ';
@@ -269,6 +274,7 @@ pub const Parser = struct {
         expected_comma,
         invalid_value,
         unexpected_newline,
+        expected_number,
     };
 
     const Pair = struct {
@@ -542,8 +548,6 @@ pub const Parser = struct {
             return Value{ .Boolean = true };
         } else if (std.mem.eql(u8, word, "false")) {
             return Value{ .Boolean = false };
-        } else if (isNumber(word)) {
-            return Value{ .Integer = toInteger(word) };
         } else {
             return Parser.Error.invalid_value;
         }
@@ -563,6 +567,10 @@ pub const Parser = struct {
         // inline table
         if (c == '{') {
             return try self.parseInlineTable();
+        }
+
+        if (isNumChar(c) or c == '+' or c == '-') {
+            return try self.parseNumber();
         }
 
         var ident = try self.parseIdentifier();
@@ -733,6 +741,45 @@ pub const Parser = struct {
         }
 
         return self.contents[start..self.getIndex()];
+    }
+
+    fn parseNumber(self: *Parser) !Value {
+        var start = self.getIndex();
+        var needs_number = false;
+
+        var c = self.curChar();
+        if (c == '+' or c == '-') {
+            c = self.rawNextChar();
+            needs_number = true;
+        }
+
+        while (isNumChar(c) and !isEof(c)) {
+            if (needs_number and !isNumChar(c)) {
+                return Parser.Error.expected_number;
+            }
+            needs_number = false;
+
+            c = self.rawNextChar();
+            if (c == '_') {
+                needs_number = true;
+                c = self.rawNextChar();
+            }
+        }
+
+        if (needs_number) {
+            return Parser.Error.expected_number;
+        }
+
+        if (c == '.') {
+            c = self.rawNextChar();
+            if (!isNumChar(c)) {
+                return Parser.Error.expected_number;
+            }
+            var decimal = try parseNumber();
+            // convert to float
+        }
+
+        return Value{ .Integer = toInteger(self.contents[start..self.getIndex()]) };
     }
 };
 
@@ -1040,7 +1087,7 @@ test "key value pair integer" {
     }
 }
 
-test "key value pair integer" {
+test "key value pair integer with underscore" {
     var table = try parseContents(std.testing.allocator,
         \\ foo=1_1234_3_4
         \\
