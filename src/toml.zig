@@ -10,9 +10,9 @@ pub const Key = union(enum) {
 
     pub fn deinit(key: *Key, allocator: *std.mem.Allocator) void {
         if (key.* == .DottedIdent) {
-            var it = key.DottedIdent.first;
-            while (it) |node| : (it = node.next) {
-                key.DottedIdent.destroyNode(node, allocator);
+            var it = key.DottedIdent;
+            while (it.pop()) |node| {
+                allocator.destroy(node);
             }
         }
     }
@@ -120,7 +120,7 @@ pub const Table = struct {
                 return;
             },
             Key.Ident => |name| {
-                var old = try self.keys.put(name, value);
+                var old = try self.keys.fetchPut(name, value);
                 if (old) |_| {
                     return Self.Error.key_already_exists;
                 }
@@ -130,10 +130,10 @@ pub const Table = struct {
                 var index: usize = 0;
                 while (index < dotted.len - 1) : (index += 1) {
                     if (current_table.keys.get(indexIdentifier(dotted, index).?)) |pair| {
-                        if (pair.value.isManyTables()) {
+                        if (pair.isManyTables()) {
                             return Self.Error.expected_table_of_one;
                         }
-                        current_table = pair.value.Table;
+                        current_table = pair.Table;
                     } else {
                         var table = try self.allocator.create(Table);
                         table.* = Table.init(self.allocator, indexIdentifier(dotted, index).?);
@@ -141,7 +141,7 @@ pub const Table = struct {
                         current_table = table;
                     }
                 }
-                var old = try current_table.keys.put(indexIdentifier(dotted, index).?, value);
+                var old = try current_table.keys.fetchPut(indexIdentifier(dotted, index).?, value);
                 if (old) |_| {
                     return Self.Error.key_already_exists;
                 }
@@ -150,23 +150,23 @@ pub const Table = struct {
     }
 
     pub fn addTable(self: *Self, table: *Table) !void {
-        if (self.keys.getValue(table.name)) |value| {
+        if (self.keys.get(table.name)) |value| {
             return Self.Error.key_already_exists;
         }
         _ = try self.keys.put(table.name, Value{ .Table = table });
     }
 
     pub fn addManyTable(self: *Self, table: *Table) !void {
-        if (self.keys.get(table.name)) |pair| {
-            if (pair.value.isManyTables()) {
-                try pair.value.ManyTables.append(table);
+        if (self.keys.get(table.name)) |*pair| {
+            if (pair.isManyTables()) {
+                try pair.ManyTables.append(table);
             } else {
                 return Self.Error.table_is_one;
             }
         } else {
             var value = TableArray.init(self.allocator);
             try value.append(table);
-            var old = try self.keys.put(table.name, Value{ .ManyTables = value });
+            var old = try self.keys.fetchPut(table.name, Value{ .ManyTables = value });
             // since we already tested if there's a table then this should be unreachable
             if (old) |_| {
                 unreachable;
@@ -176,7 +176,7 @@ pub const Table = struct {
 
     pub fn addNewTable(self: *Self, name: []const u8) !*Table {
         var table = try Table.create(self.allocator, name);
-        var old = try self.keys.put(name, Value{ .Table = table });
+        var old = try self.keys.fetchPut(name, Value{ .Table = table });
         if (old) |_| {
             return Self.Error.key_already_exists;
         }
@@ -457,10 +457,10 @@ pub const Parser = struct {
                                 break;
                             }
                             if (current_table.keys.get(node.data)) |pair| {
-                                if (pair.value.isManyTables()) {
+                                if (pair.isManyTables()) {
                                     return Parser.Error.malformed_table;
                                 }
-                                current_table = pair.value.Table;
+                                current_table = pair.Table;
                             } else {
                                 current_table = try current_table.addNewTable(node.data);
                             }
@@ -674,7 +674,10 @@ pub const Parser = struct {
         var c = self.curChar();
         if (c == '.') {
             var dottedResult = try self.parseDottedIdentifier();
-            var node = try dottedResult.createNode(keyValue, self.allocator);
+
+            var node = try self.allocator.create(DottedIdentifier.Node);
+            node.data = keyValue;
+
             dottedResult.prepend(node);
             return Key{ .DottedIdent = dottedResult };
         } else {
@@ -684,7 +687,7 @@ pub const Parser = struct {
 
     // expects self.curChar() to be a .
     fn parseDottedIdentifier(self: *Parser) !DottedIdentifier {
-        var result = DottedIdentifier.init();
+        var result = DottedIdentifier{};
 
         var c = self.curChar();
         while (c == '.') {
@@ -695,7 +698,10 @@ pub const Parser = struct {
             } else {
                 ident = try self.parseIdentifier();
             }
-            var node = try result.createNode(ident, self.allocator);
+
+            var node = try self.allocator.create(DottedIdentifier.Node);
+            node.data = ident;
+
             result.append(node);
             c = self.curChar();
         }
