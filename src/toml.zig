@@ -150,7 +150,7 @@ pub const Table = struct {
     }
 
     pub fn addTable(self: *Self, table: *Table) !void {
-        if (self.keys.get(table.name)) |value| {
+        if (self.keys.get(table.name)) |_| {
             return Self.Error.key_already_exists;
         }
         _ = try self.keys.put(table.name, Value{ .Table = table });
