@@ -73,7 +73,7 @@ pub const Table = struct {
 
     pub fn init(allocator: *std.mem.Allocator, name: []const u8) Self {
         return Self{
-            .keys = KeyMap.init(allocator),
+            .keys = KeyMap.init(allocator.*),
             .name = name,
             .allocator = allocator,
         };
@@ -164,7 +164,7 @@ pub const Table = struct {
                 return Self.Error.table_is_one;
             }
         } else {
-            var value = TableArray.init(self.allocator);
+            var value = TableArray.init(self.allocator.*);
             try value.append(table);
             var old = try self.keys.fetchPut(table.name, Value{ .ManyTables = value });
             // since we already tested if there's a table then this should be unreachable
@@ -287,7 +287,7 @@ pub const Parser = struct {
     index: usize,
 
     pub fn initWithFile(allocator: *std.mem.Allocator, filename: []const u8) !Parser {
-        var contents = try std.fs.cwd().readFileAlloc(allocator, filename, std.math.maxInt(usize));
+        var contents = try std.fs.cwd().readFileAlloc(allocator.*, filename, std.math.maxInt(usize));
         var parser = try Parser.initWithString(allocator, contents);
         parser.filename = filename;
         parser.allocated = true;
@@ -570,7 +570,7 @@ pub const Parser = struct {
     }
 
     fn parseArray(self: *Parser) anyerror!Value {
-        var result = DynamicArray.init(self.allocator);
+        var result = DynamicArray.init(self.allocator.*);
         var c = self.nextChar();
 
         var has_comma = true;
