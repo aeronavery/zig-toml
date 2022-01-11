@@ -8,7 +8,7 @@ pub const Key = union(enum) {
     DottedIdent: DottedIdentifier,
     Ident: []const u8,
 
-    pub fn deinit(key: *Key, allocator: *std.mem.Allocator) void {
+    pub fn deinit(key: *Key, allocator: std.mem.Allocator) void {
         if (key.* == .DottedIdent) {
             var it = key.DottedIdent;
             while (it.pop()) |node| {
@@ -69,17 +69,17 @@ pub const Table = struct {
     keys: KeyMap,
     name: []const u8,
 
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
 
-    pub fn init(allocator: *std.mem.Allocator, name: []const u8) Self {
+    pub fn init(allocator: std.mem.Allocator, name: []const u8) Self {
         return Self{
-            .keys = KeyMap.init(allocator.*),
+            .keys = KeyMap.init(allocator),
             .name = name,
             .allocator = allocator,
         };
     }
 
-    pub fn create(allocator: *std.mem.Allocator, name: []const u8) !*Self {
+    pub fn create(allocator: std.mem.Allocator, name: []const u8) !*Self {
         var result = try allocator.create(Table);
         result.* = Table.init(allocator, name);
         return result;
@@ -164,7 +164,7 @@ pub const Table = struct {
                 return Self.Error.table_is_one;
             }
         } else {
-            var value = TableArray.init(self.allocator.*);
+            var value = TableArray.init(self.allocator);
             try value.append(table);
             var old = try self.keys.fetchPut(table.name, Value{ .ManyTables = value });
             // since we already tested if there's a table then this should be unreachable
@@ -276,7 +276,7 @@ pub const Parser = struct {
         value: Value,
     };
 
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     global_table: *Table,
     // denotes if contents have been heap allocated (from a file)
     allocated: bool,
@@ -286,15 +286,15 @@ pub const Parser = struct {
     column: usize,
     index: usize,
 
-    pub fn initWithFile(allocator: *std.mem.Allocator, filename: []const u8) !Parser {
-        var contents = try std.fs.cwd().readFileAlloc(allocator.*, filename, std.math.maxInt(usize));
+    pub fn initWithFile(allocator: std.mem.Allocator, filename: []const u8) !Parser {
+        var contents = try std.fs.cwd().readFileAlloc(allocator, filename, std.math.maxInt(usize));
         var parser = try Parser.initWithString(allocator, contents);
         parser.filename = filename;
         parser.allocated = true;
         return parser;
     }
 
-    pub fn initWithString(allocator: *std.mem.Allocator, str: []const u8) !Parser {
+    pub fn initWithString(allocator: std.mem.Allocator, str: []const u8) !Parser {
         return Parser{
             .allocator = allocator,
             .global_table = try Table.create(allocator, ""),
@@ -570,7 +570,7 @@ pub const Parser = struct {
     }
 
     fn parseArray(self: *Parser) anyerror!Value {
-        var result = DynamicArray.init(self.allocator.*);
+        var result = DynamicArray.init(self.allocator);
         var c = self.nextChar();
 
         var has_comma = true;
@@ -742,7 +742,7 @@ pub const Parser = struct {
     }
 };
 
-pub fn parseFile(allocator: *std.mem.Allocator, filename: []const u8, out_parser: ?*Parser) !*Table {
+pub fn parseFile(allocator: std.mem.Allocator, filename: []const u8, out_parser: ?*Parser) !*Table {
     var parser = try Parser.initWithFile(allocator, filename);
     if (out_parser) |op| {
         op.* = parser;
@@ -751,7 +751,7 @@ pub fn parseFile(allocator: *std.mem.Allocator, filename: []const u8, out_parser
     return try parser.parse();
 }
 
-pub fn parseContents(allocator: *std.mem.Allocator, contents: []const u8, out_parser: ?*Parser) !*Table {
+pub fn parseContents(allocator: std.mem.Allocator, contents: []const u8, out_parser: ?*Parser) !*Table {
     // TODO: time values
     // TODO: float values
     // TODO: inline tables
