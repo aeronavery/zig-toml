@@ -89,7 +89,7 @@ pub const Table = struct {
     pub fn deinit(self: *Self) void {
         var it = self.keys.iterator();
         while (it.next()) |node| {
-            node.value_ptr.*.deinit();            
+            node.value_ptr.*.deinit();
         }
         self.keys.deinit();
         self.allocator.destroy(self);
@@ -157,7 +157,7 @@ pub const Table = struct {
     }
 
     pub fn addManyTable(self: *Self, table: *Table) !void {
-        if (self.keys.get(table.name)) |*pair| {
+        if (self.keys.getPtr(table.name)) |pair| {
             if (pair.isManyTables()) {
                 try pair.ManyTables.append(table);
             } else {
@@ -811,10 +811,10 @@ test "whitespace before table" {
     var table = try parseContents(std.testing.allocator,
         \\      [foo.hi]
         \\
-        \\        bar    =       1234       # derp              
+        \\        bar    =       1234       # derp
         \\
         \\  [bar]
-        \\  
+        \\
         \\    test = true
     , null);
     defer table.deinit();
@@ -1046,7 +1046,7 @@ test "key value pair integer" {
     }
 }
 
-test "key value pair integer" {
+test "key value pair integer with digit group separator" {
     var table = try parseContents(std.testing.allocator,
         \\ foo=1_1234_3_4
         \\
