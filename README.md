@@ -13,7 +13,7 @@ There is currently a lack of documentation but the tests contained should give e
 - [x] Booleans
 - [x] Arrays
 - [x] Comments
-- [ ] Floats
+- [x] Floats
 - [ ] Hexadecimal, octal, and binary numbers
 - [ ] Multi-line strings
 - [ ] String escapes
