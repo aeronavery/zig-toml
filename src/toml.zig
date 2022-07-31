@@ -1,5 +1,6 @@
 const std = @import("std");
 const assert = std.debug.assert;
+const fmt = std.fmt;
 
 const DottedIdentifier = std.TailQueue([]const u8);
 
@@ -26,6 +27,7 @@ pub const Value = union(enum) {
     String: []const u8,
     Boolean: bool,
     Integer: i64,
+    Float: f64,
     Array: DynamicArray,
     Table: *Table,
     ManyTables: TableArray,
@@ -210,7 +212,7 @@ fn isNumber(word: []const u8) bool {
     if (word[i] == '_') {
         return false;
     }
-    if (word[i] == '-' or word[i] == '+') {
+    if (word[i] == '-' or word[i] == '+' or word[i] == '.') {
         i += 1;
     }
     while (i < word.len) : (i += 1) {
@@ -221,12 +223,32 @@ fn isNumber(word: []const u8) bool {
             }
             i += 1;
             c = word[i];
+        } else if (c == '.') {
+            i += 1;
+            c = word[i];
         }
         if (!(c >= 48 and c <= 57)) {
             return false;
         }
     }
     return true;
+}
+
+fn isFloat(word: []const u8) bool {
+    var i: usize = 0;
+    while (i < word.len) : (i += 1) {
+        var c = word[i];
+        if (c == '.') {
+            return true;
+        }
+    }
+    return false;
+}
+
+fn toFloat(word: []const u8) f64 {
+    // var result: f64 = 0;
+    var result = fmt.parseFloat(f64, word) catch -1.2345;
+    return result;
 }
 
 fn toInteger(word: []const u8) i64 {
@@ -543,6 +565,9 @@ pub const Parser = struct {
         } else if (std.mem.eql(u8, word, "false")) {
             return Value{ .Boolean = false };
         } else if (isNumber(word)) {
+            if (isFloat(word)) {
+                return Value{ .Float = toFloat(word) };
+            }
             return Value{ .Integer = toInteger(word) };
         } else {
             return Parser.Error.invalid_value;
@@ -732,6 +757,13 @@ pub const Parser = struct {
         var c = self.nextChar();
         while (isIdentifier(c) and !isEof(c)) {
             c = self.nextChar();
+
+            if (isNumber(self.contents[start..self.getIndex()])) {
+                if (self.contents[self.getIndex()] == '.') {
+                    // it's a float
+                    c = self.nextChar();
+                }
+            }
         }
 
         if (isEof(c)) {
@@ -1029,6 +1061,54 @@ test "key value pair boolean false" {
     assert(fooKey != null);
     if (fooKey) |foo| {
         assert(foo.Boolean == false);
+    }
+}
+
+test "key value pair float 1" {
+    var table = try parseContents(std.testing.allocator,
+        \\ foo=12.34
+        \\
+    , null);
+    defer table.deinit();
+
+    var fooKey = table.keys.get("foo");
+    assert(fooKey != null);
+    if (fooKey) |foo| {
+        assert(foo.Float == 12.34);
+    }
+}
+
+test "key value pair float 2" {
+    var table = try parseContents(std.testing.allocator,
+        \\ foo=.1234
+        \\
+    , null);
+    defer table.deinit();
+
+    var fooKey = table.keys.get("foo");
+    assert(fooKey != null);
+    if (fooKey) |foo| {
+        assert(foo.Float == 0.1234);
+    }
+}
+
+test "multiple float key value pairs" {
+    var table = try parseContents(std.testing.allocator,
+        \\ foo=12.34
+        \\ bar=43.314
+    , null);
+    defer table.deinit();
+
+    var fooKey = table.keys.get("foo");
+    assert(fooKey != null);
+    if (fooKey) |foo| {
+        assert(foo.Float == 12.34);
+    }
+
+    var barKey = table.keys.get("bar");
+    assert(barKey != null);
+    if (barKey) |bar| {
+        assert(bar.Float == 43.314);
     }
 }
 
