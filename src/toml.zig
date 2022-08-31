@@ -207,20 +207,22 @@ fn isPairWhitespace(c: u8) bool {
     return c == '\t' or c == ' ';
 }
 
-fn isOctal(word: []const u8) bool {
+fn parseNonDecimalInt(word: []const u8) ?i64 {
     if (word.len < 3) {
-        return false;
+        return null;
     }
-
     if (word[0] != '0') {
-        return false;
+        return null;
     }
+    
+    var digits = word[2..word.len];
 
-    if (word[1] != 'o') {
-        return false;
-    }
-
-    return isNumber(word[2..word.len]);
+    return switch (word[1]) {
+        'b' => return std.fmt.parseInt(i64, digits, 2) catch null,
+        'o' => return std.fmt.parseInt(i64, digits, 8) catch null,
+        'x' => return std.fmt.parseInt(i64, digits, 16) catch null,
+        else => null,
+    };
 }
 
 fn isNumber(word: []const u8) bool {
@@ -264,12 +266,6 @@ fn isFloat(word: []const u8) bool {
 fn toFloat(word: []const u8) f64 {
     var result = fmt.parseFloat(f64, word) catch -1.2345;
     return result;
-}
-
-
-fn toOctal(word: []const u8) !i64 {
-    var digits = word[2..word.len];
-    return std.fmt.parseInt(i64, digits, 8) catch Parser.Error.invalid_value;
 }
 
 fn toInteger(word: []const u8) i64 {
@@ -587,8 +583,8 @@ pub const Parser = struct {
         else if (std.mem.eql(u8, word, "false")) {
             return Value{ .Boolean = false };
         }
-        else if (isOctal(word)) {
-            return Value { .Integer = try toOctal(word) };
+        else if (parseNonDecimalInt(word)) |int| {
+            return Value { .Integer = int };
         }
         else if (isFloat(word)) {
             return Value{ .Float = toFloat(word) };
@@ -1195,10 +1191,8 @@ test "key value pair positive integer" {
 }
 
 test "key value pair octal integer" {
-    var table = try parseContents(std.testing.allocator,
-        \\ foo=0o100
-        \\
-    , null);
+    var alloc = std.testing.allocator;
+    var table = try parseContents(alloc, "foo=0o100", null);
     defer table.deinit();
 
     var fooKey = table.keys.get("foo");
@@ -1206,6 +1200,32 @@ test "key value pair octal integer" {
 
     if (fooKey) |foo| {
         assert(foo.Integer == 64);
+    }
+}
+
+test "key value pair binary integer" {
+    var alloc = std.testing.allocator;
+    var table = try parseContents(alloc, "foo=0b100", null);
+    defer table.deinit();
+
+    var fooKey = table.keys.get("foo");
+    assert(fooKey != null);
+
+    if (fooKey) |foo| {
+        assert(foo.Integer == 4);
+    }
+}
+
+test "key value pair hexidecimal integer" {
+    var alloc = std.testing.allocator;
+    var table = try parseContents(alloc, "foo=0xFF", null);
+    defer table.deinit();
+
+    var fooKey = table.keys.get("foo");
+    assert(fooKey != null);
+
+    if (fooKey) |foo| {
+        assert(foo.Integer == 255);
     }
 }
 
