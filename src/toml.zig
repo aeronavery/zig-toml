@@ -207,6 +207,22 @@ fn isPairWhitespace(c: u8) bool {
     return c == '\t' or c == ' ';
 }
 
+fn isOctal(word: []const u8) bool {
+    if (word.len < 3) {
+        return false;
+    }
+
+    if (word[0] != '0') {
+        return false;
+    }
+
+    if (word[1] != 'o') {
+        return false;
+    }
+
+    return isNumber(word[2..word.len]);
+}
+
 fn isNumber(word: []const u8) bool {
     var i: usize = 0;
     if (word[i] == '_') {
@@ -246,9 +262,14 @@ fn isFloat(word: []const u8) bool {
 }
 
 fn toFloat(word: []const u8) f64 {
-    // var result: f64 = 0;
     var result = fmt.parseFloat(f64, word) catch -1.2345;
     return result;
+}
+
+
+fn toOctal(word: []const u8) !i64 {
+    var digits = word[2..word.len];
+    return std.fmt.parseInt(i64, digits, 8) catch Parser.Error.invalid_value;
 }
 
 fn toInteger(word: []const u8) i64 {
@@ -562,12 +583,17 @@ pub const Parser = struct {
     fn convertIdentifierToValue(word: []const u8) !Value {
         if (std.mem.eql(u8, word, "true")) {
             return Value{ .Boolean = true };
-        } else if (std.mem.eql(u8, word, "false")) {
+        }
+        else if (std.mem.eql(u8, word, "false")) {
             return Value{ .Boolean = false };
-        } else if (isNumber(word)) {
-            if (isFloat(word)) {
-                return Value{ .Float = toFloat(word) };
-            }
+        }
+        else if (isOctal(word)) {
+            return Value { .Integer = try toOctal(word) };
+        }
+        else if (isFloat(word)) {
+            return Value{ .Float = toFloat(word) };
+        }
+        else if (isNumber(word)) {
             return Value{ .Integer = toInteger(word) };
         } else {
             return Parser.Error.invalid_value;
@@ -1165,6 +1191,21 @@ test "key value pair positive integer" {
     assert(fooKey != null);
     if (fooKey) |foo| {
         assert(foo.Integer == 1234);
+    }
+}
+
+test "key value pair octal integer" {
+    var table = try parseContents(std.testing.allocator,
+        \\ foo=0o100
+        \\
+    , null);
+    defer table.deinit();
+
+    var fooKey = table.keys.get("foo");
+    assert(fooKey != null);
+
+    if (fooKey) |foo| {
+        assert(foo.Integer == 64);
     }
 }
 
