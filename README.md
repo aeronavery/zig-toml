@@ -7,6 +7,15 @@ There is currently a lack of documentation but the tests contained should give e
 
 [Quickstart Guide](https://github.com/darithorn/zig-toml/wiki/Quickstart-Guide)
 
+## Zig Version Support
+This table shows the project's current compatibility status with zig:
+
+| Zig Version | Status |
+| -- | -- |
+| [0.9.1](https://ziglang.org/documentation/0.9.1/) | Supported | 
+| [0.8.1 and below](https://ziglang.org/documentation/0.8.1/) | Not Supported | 
+ 
+
 ## Features
 - [x] Tables
 - [x] Keys (all kinds)
