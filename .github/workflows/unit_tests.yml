@@ -1,0 +1,28 @@
+name: Unit Tests
+
+on:
+  push:
+    branches: [ "main" ]
+
+  pull_request:
+    branches: [ "main" ]
+
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        runner-os: [ubuntu-latest]
+        zig-version: [ '0.8.1', '0.9.1', ]
+    runs-on: ${{ matrix.runner-os }}
+    name: "zig v${{ matrix.zig-version }} on ${{ matrix.runner-os }}"
+    steps:
+      - name: Checkout Correct Branch
+        uses: actions/checkout@v2
+      - name: Install Zig
+        uses: goto-bus-stop/setup-zig@v1
+        with:
+          version: ${{ matrix.zig-version }}
+      - name: Run Unit Tests
+        run: zig test src/toml.zig
