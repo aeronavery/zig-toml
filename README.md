@@ -1,3 +1,5 @@
+[![Build Status](https://github.com/aeronavery/zig-toml/actions/workflows/unit_tests.yml/badge.svg)](https://github.com/aeronavery/zig-toml/actions/workflows/unit_tests.yml)
+
 # zig-toml
 A TOML parser written in Zig targeting [TOML v0.5.0](https://github.com/toml-lang/toml). The end goal is for the program to be robust, with no crashing given any situation. Though, in its current state this program is probably far from that goal.
 
