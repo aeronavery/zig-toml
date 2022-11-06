@@ -1,9 +1,20 @@
+[![Build Status](https://github.com/aeronavery/zig-toml/actions/workflows/unit_tests.yml/badge.svg)](https://github.com/aeronavery/zig-toml/actions/workflows/unit_tests.yml)
+
 # zig-toml
 A TOML parser written in Zig targeting [TOML v0.5.0](https://github.com/toml-lang/toml). The end goal is for the program to be robust, with no crashing given any situation. Though, in its current state this program is probably far from that goal.
 
 There is currently a lack of documentation but the tests contained should give enough of an idea on how to use this.
 
 [Quickstart Guide](https://github.com/darithorn/zig-toml/wiki/Quickstart-Guide)
+
+## Zig Version Support
+This table shows the project's current compatibility status with zig:
+
+| Zig Version | Status |
+| -- | -- |
+| [0.9.1](https://ziglang.org/documentation/0.9.1/) | Supported | 
+| [0.8.1 and below](https://ziglang.org/documentation/0.8.1/) | Not Supported | 
+ 
 
 ## Features
 - [x] Tables
