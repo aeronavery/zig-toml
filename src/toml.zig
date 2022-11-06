@@ -207,6 +207,24 @@ fn isPairWhitespace(c: u8) bool {
     return c == '\t' or c == ' ';
 }
 
+fn parseNonDecimalInt(word: []const u8) ?i64 {
+    if (word.len < 3) {
+        return null;
+    }
+    if (word[0] != '0') {
+        return null;
+    }
+    
+    var digits = word[2..word.len];
+
+    return switch (word[1]) {
+        'b' => return std.fmt.parseInt(i64, digits, 2) catch null,
+        'o' => return std.fmt.parseInt(i64, digits, 8) catch null,
+        'x' => return std.fmt.parseInt(i64, digits, 16) catch null,
+        else => null,
+    };
+}
+
 fn isNumber(word: []const u8) bool {
     var i: usize = 0;
     if (word[i] == '_') {
@@ -246,7 +264,6 @@ fn isFloat(word: []const u8) bool {
 }
 
 fn toFloat(word: []const u8) f64 {
-    // var result: f64 = 0;
     var result = fmt.parseFloat(f64, word) catch -1.2345;
     return result;
 }
@@ -562,12 +579,17 @@ pub const Parser = struct {
     fn convertIdentifierToValue(word: []const u8) !Value {
         if (std.mem.eql(u8, word, "true")) {
             return Value{ .Boolean = true };
-        } else if (std.mem.eql(u8, word, "false")) {
+        }
+        else if (std.mem.eql(u8, word, "false")) {
             return Value{ .Boolean = false };
-        } else if (isNumber(word)) {
-            if (isFloat(word)) {
-                return Value{ .Float = toFloat(word) };
-            }
+        }
+        else if (parseNonDecimalInt(word)) |int| {
+            return Value { .Integer = int };
+        }
+        else if (isFloat(word)) {
+            return Value{ .Float = toFloat(word) };
+        }
+        else if (isNumber(word)) {
             return Value{ .Integer = toInteger(word) };
         } else {
             return Parser.Error.invalid_value;
@@ -1165,6 +1187,45 @@ test "key value pair positive integer" {
     assert(fooKey != null);
     if (fooKey) |foo| {
         assert(foo.Integer == 1234);
+    }
+}
+
+test "key value pair octal integer" {
+    var alloc = std.testing.allocator;
+    var table = try parseContents(alloc, "foo=0o100", null);
+    defer table.deinit();
+
+    var fooKey = table.keys.get("foo");
+    assert(fooKey != null);
+
+    if (fooKey) |foo| {
+        assert(foo.Integer == 64);
+    }
+}
+
+test "key value pair binary integer" {
+    var alloc = std.testing.allocator;
+    var table = try parseContents(alloc, "foo=0b100", null);
+    defer table.deinit();
+
+    var fooKey = table.keys.get("foo");
+    assert(fooKey != null);
+
+    if (fooKey) |foo| {
+        assert(foo.Integer == 4);
+    }
+}
+
+test "key value pair hexidecimal integer" {
+    var alloc = std.testing.allocator;
+    var table = try parseContents(alloc, "foo=0xFF", null);
+    defer table.deinit();
+
+    var fooKey = table.keys.get("foo");
+    assert(fooKey != null);
+
+    if (fooKey) |foo| {
+        assert(foo.Integer == 255);
     }
 }
 

@@ -14,7 +14,7 @@ There is currently a lack of documentation but the tests contained should give e
 - [x] Arrays
 - [x] Comments
 - [x] Floats
-- [ ] Hexadecimal, octal, and binary numbers
+- [x] Hexadecimal, octal, and binary numbers
 - [ ] Multi-line strings
 - [ ] String escapes
 - [x] Inline tables
