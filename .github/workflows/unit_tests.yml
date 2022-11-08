@@ -14,7 +14,7 @@ jobs:
     strategy:
       matrix:
         runner-os: [ubuntu-latest]
-        zig-version: [ '0.9.1', ]
+        zig-version: [ '0.9.1', '0.10.0' ]
     runs-on: ${{ matrix.runner-os }}
     name: "zig v${{ matrix.zig-version }} on ${{ matrix.runner-os }}"
     steps:
