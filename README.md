@@ -12,9 +12,9 @@ This table shows the project's current compatibility status with zig:
 
 | Zig Version | Status |
 | -- | -- |
-| [0.10.0](https://ziglang.org/documentation/0.10.0/) | Supported | 
-| [0.9.1](https://ziglang.org/documentation/0.9.1/) | Supported | 
-| [0.8.1 and below](https://ziglang.org/documentation/0.8.1/) | Not Supported | 
+| [0.10.0](https://ziglang.org/documentation/0.10.0/) | ✅ Supported | 
+| [0.9.1](https://ziglang.org/documentation/0.9.1/) | ✅ Supported | 
+| [0.8.1 and below](https://ziglang.org/documentation/0.8.1/) | ❌ Not Supported |
  
 
 ## Features
