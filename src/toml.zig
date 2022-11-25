@@ -214,7 +214,7 @@ fn parseNonDecimalInt(word: []const u8) ?i64 {
     if (word[0] != '0') {
         return null;
     }
-    
+
     var digits = word[2..word.len];
 
     return switch (word[1]) {
@@ -579,17 +579,13 @@ pub const Parser = struct {
     fn convertIdentifierToValue(word: []const u8) !Value {
         if (std.mem.eql(u8, word, "true")) {
             return Value{ .Boolean = true };
-        }
-        else if (std.mem.eql(u8, word, "false")) {
+        } else if (std.mem.eql(u8, word, "false")) {
             return Value{ .Boolean = false };
-        }
-        else if (parseNonDecimalInt(word)) |int| {
-            return Value { .Integer = int };
-        }
-        else if (isFloat(word)) {
+        } else if (parseNonDecimalInt(word)) |int| {
+            return Value{ .Integer = int };
+        } else if (isFloat(word)) {
             return Value{ .Float = toFloat(word) };
-        }
-        else if (isNumber(word)) {
+        } else if (isNumber(word)) {
             return Value{ .Integer = toInteger(word) };
         } else {
             return Parser.Error.invalid_value;
@@ -796,36 +792,27 @@ pub const Parser = struct {
     }
 };
 
-pub fn parseFile(allocator: std.mem.Allocator, filename: []const u8, out_parser: ?*Parser) !*Table {
-    var parser = try Parser.initWithFile(allocator, filename);
-    if (out_parser) |op| {
-        op.* = parser;
-        return try op.parse();
-    }
-    return try parser.parse();
+/// Wrapper around Parser.initWithFile
+pub fn parseFile(allocator: std.mem.Allocator, filename: []const u8) !Parser {
+    return try Parser.initWithFile(allocator, filename);
 }
 
-pub fn parseContents(allocator: std.mem.Allocator, contents: []const u8, out_parser: ?*Parser) !*Table {
-
+/// Wrapper around Parser.initwithString
+pub fn parseContents(allocator: std.mem.Allocator, contents: []const u8) !Parser {
     // TODO: time values
     // TODO: float values
     // TODO: inline tables
-    var parser = try Parser.initWithString(allocator, contents);
-    if (out_parser) |op| {
-        op.* = parser;
-        return try op.parse();
-    }
-    return try parser.parse();
+    return try Parser.initWithString(allocator, contents);
 }
 
 test "test.toml file" {
     const filename = "test/test.toml";
     const allocator = std.testing.allocator;
 
-    var parser: Parser = undefined;
+    var parser = try parseFile(allocator, filename);
     defer parser.deinit();
 
-    var table = try parseFile(allocator, filename, &parser);
+    var table = try parser.parse();
     defer table.deinit();
 }
 
@@ -833,10 +820,10 @@ test "basic.toml file" {
     const filename = "test/basic.toml";
     const allocator = std.testing.allocator;
 
-    var parser: Parser = undefined;
+    var parser = try parseFile(allocator, filename);
     defer parser.deinit();
 
-    var table = try parseFile(allocator, filename, &parser);
+    var table = try parser.parse();
     defer table.deinit();
 
     assert(table.keys.get("foo") != null);
@@ -850,11 +837,14 @@ test "basic.toml file" {
 }
 
 test "comment before newline" {
-    var table = try parseContents(std.testing.allocator,
+    var parser = try parseContents(std.testing.allocator,
         \\foo="test" # foo
         \\[bar]
         \\
-    , null);
+    );
+    defer parser.deinit();
+
+    var table = try parser.parse();
     defer table.deinit();
 
     var foo = table.keys.get("foo").?;
@@ -862,7 +852,7 @@ test "comment before newline" {
 }
 
 test "whitespace before table" {
-    var table = try parseContents(std.testing.allocator,
+    var parser = try parseContents(std.testing.allocator,
         \\      [foo.hi]
         \\
         \\        bar    =       1234       # derp
@@ -870,7 +860,10 @@ test "whitespace before table" {
         \\  [bar]
         \\
         \\    test = true
-    , null);
+    );
+    defer parser.deinit();
+
+    var table = try parser.parse();
     defer table.deinit();
 
     var foo = table.keys.get("foo").?;
@@ -880,28 +873,37 @@ test "whitespace before table" {
 }
 
 test "multiple key identifiers" {
-    var table = try parseContents(std.testing.allocator,
+    var parser = try parseContents(std.testing.allocator,
         \\ [foo.bar.foobar]
         \\
-    , null);
+    );
+    defer parser.deinit();
+
+    var table = try parser.parse();
     defer table.deinit();
 }
 
 test "multi-line arrays" {
-    var table = try parseContents(std.testing.allocator,
+    var parser = try parseContents(std.testing.allocator,
         \\ array = [
         \\ "]",
         \\ # inner comment
         \\ ]
-    , null);
+    );
+    defer parser.deinit();
+
+    var table = try parser.parse();
     defer table.deinit();
 }
 
 test "key value pair" {
-    var table = try parseContents(std.testing.allocator,
+    var parser = try parseContents(std.testing.allocator,
         \\ foo="hello"
         \\
-    , null);
+    );
+    defer parser.deinit();
+
+    var table = try parser.parse();
     defer table.deinit();
 
     assert(table.keys.get("foo") != null);
@@ -911,31 +913,43 @@ test "key value pair" {
 }
 
 test "table" {
-    var table = try parseContents(std.testing.allocator,
+    var parser = try parseContents(std.testing.allocator,
         \\ [foo]
         \\
-    , null);
+    );
+    defer parser.deinit();
+
+    var table = try parser.parse();
     defer table.deinit();
+
     assert(table.keys.get("foo") != null);
 }
 
 test "comment" {
-    var table = try parseContents(std.testing.allocator,
+    var parser = try parseContents(std.testing.allocator,
         \\ # [foo]
         \\
-    , null);
+    );
+    defer parser.deinit();
+
+    var table = try parser.parse();
     defer table.deinit();
+
     assert(table.keys.get("foo") == null);
 }
 
 test "comment inside array" {
-    var table = try parseContents(std.testing.allocator,
+    var parser = try parseContents(std.testing.allocator,
         \\ foo=[ # hello there
         \\ 123, 456
         \\ ]
         \\
-    , null);
+    );
+    defer parser.deinit();
+
+    var table = try parser.parse();
     defer table.deinit();
+
     var fooKey = table.keys.get("foo");
     assert(fooKey != null);
     if (fooKey) |foo| {
@@ -946,11 +960,14 @@ test "comment inside array" {
 }
 
 test "table key value pair" {
-    var table = try parseContents(std.testing.allocator,
+    var parser = try parseContents(std.testing.allocator,
         \\ [foo]
         \\ key = "bar"
         \\
-    , null);
+    );
+    defer parser.deinit();
+
+    var table = try parser.parse();
     defer table.deinit();
 
     assert(table.keys.get("foo") != null);
@@ -963,10 +980,13 @@ test "table key value pair" {
 }
 
 test "dotted key with string" {
-    var table = try parseContents(std.testing.allocator,
+    var parser = try parseContents(std.testing.allocator,
         \\ key."ziglang.org" = "bar"
         \\
-    , null);
+    );
+    defer parser.deinit();
+
+    var table = try parser.parse();
     defer table.deinit();
 
     assert(table.keys.get("key") != null);
@@ -978,13 +998,16 @@ test "dotted key with string" {
 }
 
 test "multiple tables" {
-    var table = try parseContents(std.testing.allocator,
+    var parser = try parseContents(std.testing.allocator,
         \\ [foo]
         \\ key="bar"
         \\ [derp]
         \\ another="foobar"
         \\
-    , null);
+    );
+    defer parser.deinit();
+
+    var table = try parser.parse();
     defer table.deinit();
 
     assert(table.keys.get("foo") != null);
@@ -1005,10 +1028,13 @@ test "multiple tables" {
 }
 
 test "key value pair with string key" {
-    var table = try parseContents(std.testing.allocator,
+    var parser = try parseContents(std.testing.allocator,
         \\ "foo"="hello"
         \\
-    , null);
+    );
+    defer parser.deinit();
+
+    var table = try parser.parse();
     defer table.deinit();
 
     var keyValue = table.keys.get("foo");
@@ -1019,10 +1045,13 @@ test "key value pair with string key" {
 }
 
 test "dotted key value pair" {
-    var table = try parseContents(std.testing.allocator,
+    var parser = try parseContents(std.testing.allocator,
         \\ foo.bar="hello"
         \\
-    , null);
+    );
+    defer parser.deinit();
+
+    var table = try parser.parse();
     defer table.deinit();
 
     var fooTable = table.keys.get("foo");
@@ -1037,11 +1066,14 @@ test "dotted key value pair" {
 }
 
 test "dotted key value pair within table" {
-    var table = try parseContents(std.testing.allocator,
+    var parser = try parseContents(std.testing.allocator,
         \\ [foobar]
         \\ foo.bar="hello"
         \\
-    , null);
+    );
+    defer parser.deinit();
+
+    var table = try parser.parse();
     defer table.deinit();
 
     var fooBarTable = table.keys.get("foobar");
@@ -1059,10 +1091,13 @@ test "dotted key value pair within table" {
 }
 
 test "key value pair boolean true" {
-    var table = try parseContents(std.testing.allocator,
+    var parser = try parseContents(std.testing.allocator,
         \\foo=true
         \\
-    , null);
+    );
+    defer parser.deinit();
+
+    var table = try parser.parse();
     defer table.deinit();
 
     var fooKey = table.keys.get("foo");
@@ -1073,10 +1108,13 @@ test "key value pair boolean true" {
 }
 
 test "key value pair boolean false" {
-    var table = try parseContents(std.testing.allocator,
+    var parser = try parseContents(std.testing.allocator,
         \\ foo=false
         \\
-    , null);
+    );
+    defer parser.deinit();
+
+    var table = try parser.parse();
     defer table.deinit();
 
     var fooKey = table.keys.get("foo");
@@ -1087,10 +1125,13 @@ test "key value pair boolean false" {
 }
 
 test "key value pair float 1" {
-    var table = try parseContents(std.testing.allocator,
+    var parser = try parseContents(std.testing.allocator,
         \\ foo=12.34
         \\
-    , null);
+    );
+    defer parser.deinit();
+
+    var table = try parser.parse();
     defer table.deinit();
 
     var fooKey = table.keys.get("foo");
@@ -1101,10 +1142,13 @@ test "key value pair float 1" {
 }
 
 test "key value pair float 2" {
-    var table = try parseContents(std.testing.allocator,
+    var parser = try parseContents(std.testing.allocator,
         \\ foo=.1234
         \\
-    , null);
+    );
+    defer parser.deinit();
+
+    var table = try parser.parse();
     defer table.deinit();
 
     var fooKey = table.keys.get("foo");
@@ -1115,10 +1159,13 @@ test "key value pair float 2" {
 }
 
 test "multiple float key value pairs" {
-    var table = try parseContents(std.testing.allocator,
+    var parser = try parseContents(std.testing.allocator,
         \\ foo=12.34
         \\ bar=43.314
-    , null);
+    );
+    defer parser.deinit();
+
+    var table = try parser.parse();
     defer table.deinit();
 
     var fooKey = table.keys.get("foo");
@@ -1135,10 +1182,13 @@ test "multiple float key value pairs" {
 }
 
 test "key value pair integer" {
-    var table = try parseContents(std.testing.allocator,
+    var parser = try parseContents(std.testing.allocator,
         \\ foo=1234
         \\
-    , null);
+    );
+    defer parser.deinit();
+
+    var table = try parser.parse();
     defer table.deinit();
 
     var fooKey = table.keys.get("foo");
@@ -1149,10 +1199,13 @@ test "key value pair integer" {
 }
 
 test "key value pair integer with digit group separator" {
-    var table = try parseContents(std.testing.allocator,
+    var parser = try parseContents(std.testing.allocator,
         \\ foo=1_1234_3_4
         \\
-    , null);
+    );
+    defer parser.deinit();
+
+    var table = try parser.parse();
     defer table.deinit();
 
     var fooKey = table.keys.get("foo");
@@ -1163,10 +1216,13 @@ test "key value pair integer with digit group separator" {
 }
 
 test "key value pair negative integer" {
-    var table = try parseContents(std.testing.allocator,
+    var parser = try parseContents(std.testing.allocator,
         \\ foo=-1234
         \\
-    , null);
+    );
+    defer parser.deinit();
+
+    var table = try parser.parse();
     defer table.deinit();
 
     var fooKey = table.keys.get("foo");
@@ -1177,10 +1233,13 @@ test "key value pair negative integer" {
 }
 
 test "key value pair positive integer" {
-    var table = try parseContents(std.testing.allocator,
+    var parser = try parseContents(std.testing.allocator,
         \\ foo=+1234
         \\
-    , null);
+    );
+    defer parser.deinit();
+
+    var table = try parser.parse();
     defer table.deinit();
 
     var fooKey = table.keys.get("foo");
@@ -1192,7 +1251,10 @@ test "key value pair positive integer" {
 
 test "key value pair octal integer" {
     var alloc = std.testing.allocator;
-    var table = try parseContents(alloc, "foo=0o100", null);
+    var parser = try parseContents(alloc, "foo=0o100");
+    defer parser.deinit();
+
+    var table = try parser.parse();
     defer table.deinit();
 
     var fooKey = table.keys.get("foo");
@@ -1205,7 +1267,10 @@ test "key value pair octal integer" {
 
 test "key value pair binary integer" {
     var alloc = std.testing.allocator;
-    var table = try parseContents(alloc, "foo=0b100", null);
+    var parser = try parseContents(alloc, "foo=0b100");
+    defer parser.deinit();
+
+    var table = try parser.parse();
     defer table.deinit();
 
     var fooKey = table.keys.get("foo");
@@ -1218,7 +1283,10 @@ test "key value pair binary integer" {
 
 test "key value pair hexidecimal integer" {
     var alloc = std.testing.allocator;
-    var table = try parseContents(alloc, "foo=0xFF", null);
+    var parser = try parseContents(alloc, "foo=0xFF");
+    defer parser.deinit();
+
+    var table = try parser.parse();
     defer table.deinit();
 
     var fooKey = table.keys.get("foo");
@@ -1230,11 +1298,14 @@ test "key value pair hexidecimal integer" {
 }
 
 test "multiple key value pair" {
-    var table = try parseContents(std.testing.allocator,
+    var parser = try parseContents(std.testing.allocator,
         \\ foo=1234
         \\ bar=4321
         \\
-    , null);
+    );
+    defer parser.deinit();
+
+    var table = try parser.parse();
     defer table.deinit();
 
     var fooKey = table.keys.get("foo");
@@ -1251,10 +1322,13 @@ test "multiple key value pair" {
 }
 
 test "key value simple array" {
-    var table = try parseContents(std.testing.allocator,
+    var parser = try parseContents(std.testing.allocator,
         \\ foo=[]
         \\
-    , null);
+    );
+    defer parser.deinit();
+
+    var table = try parser.parse();
     defer table.deinit();
 
     var fooKey = table.keys.get("foo");
@@ -1263,10 +1337,13 @@ test "key value simple array" {
 }
 
 test "key value multiple element array" {
-    var table = try parseContents(std.testing.allocator,
+    var parser = try parseContents(std.testing.allocator,
         \\ foo=[ 1234, 5678, true, false, "hello" ]
         \\
-    , null);
+    );
+    defer parser.deinit();
+
+    var table = try parser.parse();
     defer table.deinit();
 
     var fooKey = table.keys.get("foo");
@@ -1282,10 +1359,13 @@ test "key value multiple element array" {
 }
 
 test "key value array in array" {
-    var table = try parseContents(std.testing.allocator,
+    var parser = try parseContents(std.testing.allocator,
         \\ foo=[[[[[1234]], 57789, [1234, 578]]]]
         \\
-    , null);
+    );
+    defer parser.deinit();
+
+    var table = try parser.parse();
     defer table.deinit();
 
     var fooKey = table.keys.get("foo");
@@ -1307,10 +1387,13 @@ test "key value array in array" {
 }
 
 test "key with string first" {
-    var table = try parseContents(std.testing.allocator,
+    var parser = try parseContents(std.testing.allocator,
         \\ "foo".bar = "foobar"
         \\
-    , null);
+    );
+    defer parser.deinit();
+
+    var table = try parser.parse();
     defer table.deinit();
 
     var fooTable = table.keys.get("foo").?;
@@ -1319,11 +1402,14 @@ test "key with string first" {
 }
 
 test "table with dotted identifier" {
-    var table = try parseContents(std.testing.allocator,
+    var parser = try parseContents(std.testing.allocator,
         \\ [foo.bar]
         \\ testKey = "hello"
         \\
-    , null);
+    );
+    defer parser.deinit();
+
+    var table = try parser.parse();
     defer table.deinit();
 
     var foo = table.keys.get("foo").?;
@@ -1333,12 +1419,15 @@ test "table with dotted identifier" {
 }
 
 test "array of tables" {
-    // var table = try parseContents(std.testing.allocator,
+    // var parser = try parseContents(std.testing.allocator,
     //     \\[[foo]]
     //     \\bar = "hi"
     //     \\[[foo]]
     //     \\bar = "test"
-    // , null);
+    // );
+    // defer parser.deinit();
+
+    // var table = try parser.parse();
     // defer table.deinit();
 
     // var foo = table.keys.get("foo").?;
@@ -1355,7 +1444,10 @@ test "array of tables" {
 }
 
 test "window line endings" {
-    var table = try parseContents(std.testing.allocator, "foo=1234\r\nbar=5789\r\n", null);
+    var parser = try parseContents(std.testing.allocator, "foo=1234\r\nbar=5789\r\n");
+    defer parser.deinit();
+
+    var table = try parser.parse();
     defer table.deinit();
 
     assert(table.keys.get("foo") != null);
@@ -1363,9 +1455,12 @@ test "window line endings" {
 }
 
 test "empty inline table" {
-    var table = try parseContents(std.testing.allocator,
+    var parser = try parseContents(std.testing.allocator,
         \\foo = {}
-    , null);
+    );
+    defer parser.deinit();
+
+    var table = try parser.parse();
     defer table.deinit();
 
     assert(table.keys.get("foo") != null);
@@ -1373,9 +1468,12 @@ test "empty inline table" {
 }
 
 test "inline table with keys" {
-    var table = try parseContents(std.testing.allocator,
+    var parser = try parseContents(std.testing.allocator,
         \\foo = { bar = 1234, foobar = "test string" }
-    , null);
+    );
+    defer parser.deinit();
+
+    var table = try parser.parse();
     defer table.deinit();
 
     var foo = table.keys.get("foo").?.Table;
@@ -1387,9 +1485,12 @@ test "inline table with keys" {
 }
 
 test "inline table with inline table" {
-    var table = try parseContents(std.testing.allocator,
+    var parser = try parseContents(std.testing.allocator,
         \\foo = { bar = { foobar = "test string" } }
-    , null);
+    );
+    defer parser.deinit();
+
+    var table = try parser.parse();
     defer table.deinit();
 
     var foo = table.keys.get("foo").?.Table;
