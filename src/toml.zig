@@ -283,7 +283,7 @@ fn toInteger(word: []const u8) i64 {
             i += 1;
             continue;
         }
-        result += @intCast(i64, (word[i] - 48));
+        result += @as(i64, @intCast((word[i] - 48)));
         i += 1;
         if (i < word.len) {
             result *= 10;
