@@ -1,4 +1,5 @@
 const Builder = @import("std").build.Builder;
+const std = @import("std");
 
 pub fn build(b: *Builder) void {
     const target = b.standardTargetOptions(.{});
@@ -10,6 +11,10 @@ pub fn build(b: *Builder) void {
         .target = target,
     });
     b.installArtifact(lib);
+    const module = b.addModule("toml", std.Build.CreateModuleOptions{
+        .source_file = .{ .path = "src/toml.zig" },
+    });
+    lib.addModule("toml", module);
 
     const main_tests = b.addTest(.{
         .root_source_file = .{ .path = "src/toml.zig" },

@@ -1650,3 +1650,36 @@ test "stringify_tables" {
         \\{"bazz":{"bar":false,"foo":"hello"},"mizz":{"carp":true}}
     ));
 }
+
+test {
+    const toml =
+        \\[data]
+        \\author = "Robert"
+        \\github = "VisenDev"
+        \\#heres a comment
+        \\
+        \\[numbers]
+        \\list = [1, 2, 3]
+    ;
+    const toml_type = struct {
+        data: struct {
+            author: []const u8,
+            github: []const u8,
+        },
+        numbers: struct {
+            list: []const u32,
+        },
+    };
+
+    var parser = try parseContents(std.testing.allocator, toml);
+    defer parser.deinit();
+
+    var table = try parser.parse();
+    defer table.deinit();
+
+    var json = try table.stringify();
+    defer json.deinit();
+
+    const parsed = try std.json.parseFromSlice(toml_type, std.testing.allocator, json.items, .{});
+    defer parsed.deinit();
+}
