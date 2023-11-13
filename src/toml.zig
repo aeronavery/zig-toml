@@ -123,6 +123,7 @@ pub const Value = union(enum) {
                     if (!first_element) {
                         try result.append(',');
                     }
+                    first_element = false;
                     var table_string = try table.stringify();
                     try result.appendSlice(table_string.items);
                     table_string.deinit();
