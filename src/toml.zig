@@ -22,6 +22,13 @@ pub const Key = union(enum) {
 pub const DynamicArray = std.ArrayList(Value);
 pub const TableArray = std.ArrayList(*Table);
 
+pub const TomlStringifyError = error{
+    table_is_one,
+    key_already_exists,
+    expected_table_of_one,
+    OutOfMemory,
+};
+
 pub const Value = union(enum) {
     None,
     String: []const u8,
@@ -59,6 +66,72 @@ pub const Value = union(enum) {
             },
             else => {},
         }
+    }
+
+    pub fn stringify(self: Value, a: std.mem.Allocator) TomlStringifyError!std.ArrayList(u8) {
+        var result = std.ArrayList(u8).init(a);
+        switch (self) {
+            .None => {},
+            .String => {
+                try result.append('\"');
+                try result.appendSlice(self.String);
+                try result.append('\"');
+            },
+            .Boolean => {
+                switch (self.Boolean) {
+                    true => try result.appendSlice("true"),
+                    false => try result.appendSlice("false"),
+                }
+            },
+            .Integer => {
+                var stringified = try std.fmt.allocPrint(a, "{}", .{self.Integer});
+                try result.appendSlice(stringified);
+                a.free(stringified);
+            },
+            .Float => {
+                var stringified = try std.fmt.allocPrint(a, "{}", .{self.Float});
+                try result.appendSlice(stringified);
+                a.free(stringified);
+            },
+            .Array => {
+                try result.append('[');
+                var first_element = true;
+                for (self.Array.items) |val| {
+
+                    //skip comma on first element
+                    if (!first_element) {
+                        try result.append(',');
+                    }
+                    first_element = false;
+                    var val_string = try val.stringify(a);
+                    try result.appendSlice(val_string.items);
+                    val_string.deinit();
+                }
+                try result.append(']');
+            },
+            .Table => {
+                var table_string = try self.Table.stringify();
+                try result.appendSlice(table_string.items);
+                table_string.deinit();
+            },
+            .ManyTables => {
+                try result.append('[');
+                var first_element = true;
+                for (self.ManyTables.items) |table| {
+
+                    //skip comma on first element
+                    if (!first_element) {
+                        try result.append(',');
+                    }
+                    var table_string = try table.stringify();
+                    try result.appendSlice(table_string.items);
+                    table_string.deinit();
+                }
+
+                try result.append(']');
+            },
+        }
+        return result;
     }
 };
 
@@ -183,6 +256,42 @@ pub const Table = struct {
             return Self.Error.key_already_exists;
         }
         return table;
+    }
+
+    ///iterates over all the keys in the Table
+    pub inline fn iterator(self: *Self) KeyMap.Iterator {
+        return self.keys.iterator();
+    }
+
+    ///emits json
+    pub fn stringify(self: *@This()) TomlStringifyError!std.ArrayList(u8) {
+        var result = std.ArrayList(u8).init(self.allocator);
+        errdefer result.deinit();
+
+        try result.append('{');
+
+        var first_iteration = true;
+        var iter = self.iterator();
+        while (iter.next()) |elem| {
+
+            //skip leading comma on first iteration
+            if (!first_iteration) {
+                try result.append(',');
+            }
+            first_iteration = false;
+
+            try result.append('\"');
+            try result.appendSlice(elem.key_ptr.*);
+            try result.appendSlice("\":");
+
+            const value_string = try elem.value_ptr.stringify(self.allocator);
+            try result.appendSlice(value_string.items);
+            value_string.deinit();
+        }
+
+        try result.append('}');
+
+        return result;
     }
 };
 
@@ -1497,4 +1606,47 @@ test "inline table with inline table" {
     var bar = foo.keys.get("bar").?.Table;
     var foobar = bar.keys.get("foobar").?.String;
     assert(std.mem.eql(u8, foobar, "test string"));
+}
+
+test "stringify" {
+    var parser = try parseContents(std.testing.allocator,
+        \\ foo="hello"
+        \\ bar=false
+        \\ bizz="bazz"
+        \\ new=1000
+        \\ bip=12.24
+    );
+    defer parser.deinit();
+
+    var table = try parser.parse();
+    defer table.deinit();
+
+    var json = try table.stringify();
+    defer json.deinit();
+
+    try std.testing.expect(std.mem.eql(u8, json.items,
+        \\{"bizz":"bazz","bip":1.224e+01,"bar":false,"new":1000,"foo":"hello"}
+    ));
+}
+
+test "stringify_tables" {
+    var parser = try parseContents(std.testing.allocator,
+        \\ [bazz]
+        \\ foo="hello"
+        \\ bar=false
+        \\
+        \\ [mizz]
+        \\ carp=true
+    );
+    defer parser.deinit();
+
+    var table = try parser.parse();
+    defer table.deinit();
+
+    var json = try table.stringify();
+    defer json.deinit();
+
+    try std.testing.expect(std.mem.eql(u8, json.items,
+        \\{"bazz":{"bar":false,"foo":"hello"},"mizz":{"carp":true}}
+    ));
 }
