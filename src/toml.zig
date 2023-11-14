@@ -70,6 +70,8 @@ pub const Value = union(enum) {
 
     pub fn stringify(self: Value, a: std.mem.Allocator) TomlStringifyError!std.ArrayList(u8) {
         var result = std.ArrayList(u8).init(a);
+        errdefer result.deinit();
+
         switch (self) {
             .None => {},
             .String => {
@@ -85,11 +87,13 @@ pub const Value = union(enum) {
             },
             .Integer => {
                 var stringified = try std.fmt.allocPrint(a, "{}", .{self.Integer});
+                errdefer a.free(stringified);
                 try result.appendSlice(stringified);
                 a.free(stringified);
             },
             .Float => {
                 var stringified = try std.fmt.allocPrint(a, "{}", .{self.Float});
+                errdefer a.free(stringified);
                 try result.appendSlice(stringified);
                 a.free(stringified);
             },
@@ -286,6 +290,7 @@ pub const Table = struct {
             try result.appendSlice("\":");
 
             const value_string = try elem.value_ptr.stringify(self.allocator);
+            errdefer value_string.deinit();
             try result.appendSlice(value_string.items);
             value_string.deinit();
         }
@@ -1652,7 +1657,7 @@ test "stringify_tables" {
     ));
 }
 
-test {
+test "parsing toml into type" {
     const toml =
         \\[data]
         \\author = "Robert"
