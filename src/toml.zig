@@ -22,10 +22,7 @@ pub const Key = union(enum) {
 pub const DynamicArray = std.ArrayList(Value);
 pub const TableArray = std.ArrayList(*Table);
 
-pub const TomlStringifyError = error{
-    table_is_one,
-    key_already_exists,
-    expected_table_of_one,
+pub const ToJsonError = error{
     OutOfMemory,
 };
 
@@ -68,7 +65,7 @@ pub const Value = union(enum) {
         }
     }
 
-    pub fn stringify(self: Value, a: std.mem.Allocator) TomlStringifyError!std.ArrayList(u8) {
+    pub fn toJson(self: Value, a: std.mem.Allocator) ToJsonError!std.ArrayList(u8) {
         var result = std.ArrayList(u8).init(a);
         errdefer result.deinit();
 
@@ -107,14 +104,14 @@ pub const Value = union(enum) {
                         try result.append(',');
                     }
                     first_element = false;
-                    var val_string = try val.stringify(a);
+                    var val_string = try val.toJson(a);
                     try result.appendSlice(val_string.items);
                     val_string.deinit();
                 }
                 try result.append(']');
             },
             .Table => {
-                var table_string = try self.Table.stringify();
+                var table_string = try self.Table.toJson();
                 try result.appendSlice(table_string.items);
                 table_string.deinit();
             },
@@ -128,7 +125,7 @@ pub const Value = union(enum) {
                         try result.append(',');
                     }
                     first_element = false;
-                    var table_string = try table.stringify();
+                    var table_string = try table.toJson();
                     try result.appendSlice(table_string.items);
                     table_string.deinit();
                 }
@@ -269,7 +266,7 @@ pub const Table = struct {
     }
 
     ///emits json
-    pub fn stringify(self: *@This()) TomlStringifyError!std.ArrayList(u8) {
+    pub fn toJson(self: *@This()) ToJsonError!std.ArrayList(u8) {
         var result = std.ArrayList(u8).init(self.allocator);
         errdefer result.deinit();
 
@@ -289,7 +286,7 @@ pub const Table = struct {
             try result.appendSlice(elem.key_ptr.*);
             try result.appendSlice("\":");
 
-            const value_string = try elem.value_ptr.stringify(self.allocator);
+            const value_string = try elem.value_ptr.toJson(self.allocator);
             errdefer value_string.deinit();
             try result.appendSlice(value_string.items);
             value_string.deinit();
@@ -1614,7 +1611,7 @@ test "inline table with inline table" {
     assert(std.mem.eql(u8, foobar, "test string"));
 }
 
-test "stringify" {
+test "toJson" {
     var parser = try parseContents(std.testing.allocator,
         \\ foo="hello"
         \\ bar=false
@@ -1627,7 +1624,7 @@ test "stringify" {
     var table = try parser.parse();
     defer table.deinit();
 
-    var json = try table.stringify();
+    var json = try table.toJson();
     defer json.deinit();
 
     try std.testing.expect(std.mem.eql(u8, json.items,
@@ -1635,7 +1632,7 @@ test "stringify" {
     ));
 }
 
-test "stringify_tables" {
+test "toJson_tables" {
     var parser = try parseContents(std.testing.allocator,
         \\ [bazz]
         \\ foo="hello"
@@ -1649,7 +1646,7 @@ test "stringify_tables" {
     var table = try parser.parse();
     defer table.deinit();
 
-    var json = try table.stringify();
+    var json = try table.toJson();
     defer json.deinit();
 
     try std.testing.expect(std.mem.eql(u8, json.items,
@@ -1683,7 +1680,7 @@ test "parsing toml into type" {
     var table = try parser.parse();
     defer table.deinit();
 
-    var json = try table.stringify();
+    var json = try table.toJson();
     defer json.deinit();
 
     const parsed = try std.json.parseFromSlice(toml_type, std.testing.allocator, json.items, .{});
