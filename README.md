@@ -38,3 +38,30 @@ This library is self-contained and requires no dependencies.
 To build simply run `zig build` and that will output a file called `libtoml.a` that you can link with your program.
 
 If you want to run the tests then use the `zig build test` command.
+
+## Installation
+
+Add this to you build.zig
+```zig
+    const zigtoml = b.dependency("zigtoml", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    exe.addModule("toml", zigtoml.module("toml"));
+```
+
+Add this to your build.zig.zon
+
+```zig
+    .zigtoml = .{
+       .url = "https://github.com/aeronavery/zig-toml/archive/refs/heads/master.tar.gz",
+       //hash will be suggested by the zig compiler
+    }
+```
+
+This can then be imported into your code like this
+
+```zig
+const toml = @import("toml");
+
+```
