@@ -19,7 +19,7 @@ jobs:
     name: "zig v${{ matrix.zig-version }} on ${{ matrix.runner-os }}"
     steps:
       - name: Checkout Correct Branch
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Install Zig
         uses: goto-bus-stop/setup-zig@v2
         with:
