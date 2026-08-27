@@ -1,23 +1,28 @@
-const Builder = @import("std").build.Builder;
+const std = @import("std");
 
-pub fn build(b: *Builder) void {
+pub fn build(b: *std.Build) void {
+    const linkage = b.option(std.builtin.LinkMode, "linkage", "Link mode for zig-toml library") orelse .static; // or other default
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    const lib = b.addStaticLibrary(.{
-        .name = "toml",
-        .root_source_file = .{ .path = "src/toml.zig" },
-        .optimize = optimize,
+
+    const module = b.addModule("toml", .{
+        .root_source_file = b.path("src/toml.zig"),
         .target = target,
+        .optimize = optimize,
+    });
+
+    const lib = b.addLibrary(.{
+        .linkage = linkage,
+        .name = "toml",
+        .root_module = module,
     });
     b.installArtifact(lib);
 
     const main_tests = b.addTest(.{
-        .root_source_file = .{ .path = "src/toml.zig" },
-        .optimize = optimize,
-        .target = target,
+        .root_module = module,
     });
 
-    main_tests.linkSystemLibrary("c");
+    main_tests.root_module.link_libc = true;
 
     const run_test_cmd = b.addRunArtifact(main_tests);
     run_test_cmd.has_side_effects = true;

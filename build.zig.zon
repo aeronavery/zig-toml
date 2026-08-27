@@ -1,0 +1,13 @@
+.{
+    .name = .zig_toml,
+    .fingerprint = 0xdaafbfb0877d079e,
+    .version = "0.1.0",
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "test",
+        "LICENSE",
+        "README.md",
+    },
+}
