@@ -1,8 +1,12 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const fmt = std.fmt;
+const Io = std.Io;
 
 const DottedIdentifier = std.DoublyLinkedList;
+
+var threaded: std.Io.Threaded = .init_single_threaded;
+const io = threaded.io();
 
 const DottedIdentifierNode = struct {
     data: []const u8,
@@ -173,7 +177,7 @@ pub const Table = struct {
                 return Self.Error.table_is_one;
             }
         } else {
-            var value: TableArray = .{};
+            var value: TableArray = .empty;
             try value.append(self.allocator,table);
             const old = try self.keys.fetchPut(table.name, Value{ .ManyTables = value });
             // since we already tested if there's a table then this should be unreachable
@@ -333,7 +337,7 @@ pub const Parser = struct {
     index: usize,
 
     pub fn initWithFile(allocator: std.mem.Allocator, filename: []const u8) !Parser {
-        const contents = try std.fs.cwd().readFileAlloc(allocator, filename, std.math.maxInt(usize));
+        const contents = try std.Io.Dir.cwd().readFileAlloc(io, filename, allocator, .limited(std.math.maxInt(usize)));
         var parser = try Parser.initWithString(allocator, contents);
         parser.filename = filename;
         parser.allocated = true;
@@ -622,7 +626,7 @@ pub const Parser = struct {
     }
 
     fn parseArray(self: *Parser) anyerror!Value {
-        var result : DynamicArray = .{};
+        var result : DynamicArray = .empty;
         var c = self.nextChar();
 
         var has_comma = true;

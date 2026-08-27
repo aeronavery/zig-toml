@@ -22,7 +22,7 @@ pub fn build(b: *std.Build) void {
         .root_module = module,
     });
 
-    main_tests.linkSystemLibrary("c");
+    main_tests.root_module.link_libc = true;
 
     const run_test_cmd = b.addRunArtifact(main_tests);
     run_test_cmd.has_side_effects = true;
